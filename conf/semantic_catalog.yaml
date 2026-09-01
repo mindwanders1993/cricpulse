@@ -1,0 +1,145 @@
+version: "1.0.0"
+domain: "cricket_intelligence"
+description: "Canonical Metric Store and Semantic Catalog for CricPulse AI Agents"
+
+metrics:
+  # ==========================================
+  # BATTING METRICS
+  # ==========================================
+  batting_strike_rate:
+    name: "Batting Strike Rate"
+    description: "Number of runs scored per 100 legal balls faced (strictly excludes wides)."
+    formula: "(SUM(runs_batter)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wide = FALSE THEN 1 END), 0)) * 100"
+    unit: "percentage"
+    required_grain: ["batter_id"]
+    default_sort: "DESC"
+
+  batting_average:
+    name: "Batting Average"
+    description: "Total runs scored divided by the number of times dismissed."
+    formula: "SUM(runs_batter)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wicket AND player_out_id = batter_id THEN 1 END), 0)"
+    unit: "runs_per_dismissal"
+    required_grain: ["batter_id"]
+    default_sort: "DESC"
+
+  dot_ball_percentage:
+    name: "Dot Ball Percentage"
+    description: "Percentage of legal deliveries where the batter scored 0 runs."
+    formula: "(COUNT(CASE WHEN runs_batter = 0 AND is_wide = FALSE THEN 1 END)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wide = FALSE THEN 1 END), 0)) * 100"
+    unit: "percentage"
+    required_grain: ["batter_id"]
+    default_sort: "ASC"
+
+  boundary_run_percentage:
+    name: "Boundary Run Percentage"
+    description: "Percentage of batter's total runs that came exclusively from 4s and 6s."
+    formula: "(SUM(CASE WHEN is_boundary_four THEN 4 WHEN is_boundary_six THEN 6 ELSE 0 END)::DOUBLE / NULLIF(SUM(runs_batter), 0)) * 100"
+    unit: "percentage"
+    required_grain: ["batter_id"]
+    default_sort: "DESC"
+
+  boundary_frequency:
+    name: "Boundary Frequency (Balls per Boundary)"
+    description: "Average number of legal balls faced per boundary hit."
+    formula: "COUNT(CASE WHEN is_wide = FALSE THEN 1 END)::DOUBLE / NULLIF(SUM(CASE WHEN is_boundary_four OR is_boundary_six THEN 1 ELSE 0 END), 0)"
+    unit: "balls"
+    required_grain: ["batter_id"]
+    default_sort: "ASC"
+
+  death_over_clutch_index:
+    name: "Death Over Clutch Index"
+    description: "Batting strike rate in death overs (overs 16-20 in T20) during 2nd innings run-chases."
+    formula: "(SUM(CASE WHEN phase = 'death' AND innings_number = 2 THEN runs_batter ELSE 0 END)::DOUBLE / NULLIF(COUNT(CASE WHEN phase = 'death' AND innings_number = 2 AND is_wide = FALSE THEN 1 END), 0)) * 100"
+    unit: "index"
+    required_grain: ["batter_id"]
+    default_sort: "DESC"
+
+  # ==========================================
+  # BOWLING METRICS
+  # ==========================================
+  bowling_economy_rate:
+    name: "Bowling Economy Rate"
+    description: "Runs charged to the bowler per 6 legal balls. Note: strictly excludes byes and leg-byes!"
+    formula: "(SUM(runs_batter + CASE WHEN is_wide OR is_no_ball THEN runs_extras ELSE 0 END)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wide = FALSE AND is_no_ball = FALSE THEN 1 END) / 6.0, 0))"
+    unit: "runs_per_over"
+    required_grain: ["bowler_id"]
+    default_sort: "ASC"
+
+  bowling_average:
+    name: "Bowling Average"
+    description: "Runs conceded per bowler-credited wicket taken."
+    formula: "SUM(runs_batter + CASE WHEN is_wide OR is_no_ball THEN runs_extras ELSE 0 END)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wicket AND dismissal_kind IN ('bowled', 'caught', 'lbw', 'stumped', 'caught and bowled', 'hit wicket') THEN 1 END), 0)"
+    unit: "runs_per_wicket"
+    required_grain: ["bowler_id"]
+    default_sort: "ASC"
+
+  bowling_strike_rate:
+    name: "Bowling Strike Rate"
+    description: "Number of legal deliveries bowled per wicket taken."
+    formula: "COUNT(CASE WHEN is_wide = FALSE AND is_no_ball = FALSE THEN 1 END)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wicket AND dismissal_kind IN ('bowled', 'caught', 'lbw', 'stumped', 'caught and bowled', 'hit wicket') THEN 1 END), 0)"
+    unit: "balls_per_wicket"
+    required_grain: ["bowler_id"]
+    default_sort: "ASC"
+
+  dot_ball_bowling_percentage:
+    name: "Dot Ball Bowling Percentage"
+    description: "Percentage of legal deliveries that yield 0 total runs."
+    formula: "(COUNT(CASE WHEN total_runs = 0 AND is_wide = FALSE AND is_no_ball = FALSE THEN 1 END)::DOUBLE / NULLIF(COUNT(CASE WHEN is_wide = FALSE AND is_no_ball = FALSE THEN 1 END), 0)) * 100"
+    unit: "percentage"
+    required_grain: ["bowler_id"]
+    default_sort: "DESC"
+
+  # ==========================================
+  # MATCH & SITUATIONAL METRICS
+  # ==========================================
+  current_run_rate:
+    name: "Current Run Rate (CRR)"
+    description: "Total runs scored divided by completed overs."
+    formula: "total_runs::DOUBLE / NULLIF(overs_completed, 0)"
+    unit: "rate"
+
+  required_run_rate:
+    name: "Required Run Rate (RRR)"
+    description: "Runs required divided by remaining overs in a run-chase."
+    formula: "(target_runs - current_runs)::DOUBLE / NULLIF(remaining_overs, 0)"
+    unit: "rate"
+
+dimensions:
+  phase:
+    name: "Match Phase"
+    description: "Temporal partition of an innings."
+    allowed_values:
+      - powerplay: "Overs 1-6 in T20 (Overs 1-10 in ODI)"
+      - middle: "Overs 7-15 in T20 (Overs 11-40 in ODI)"
+      - death: "Overs 16-20 in T20 (Overs 41-50 in ODI)"
+      - regular: "All overs in Test or multi-day matches"
+
+  dismissal_kind:
+    name: "Dismissal Kind"
+    description: "Classification of dismissal."
+    bowler_credited:
+      - "bowled"
+      - "caught"
+      - "lbw"
+      - "stumped"
+      - "caught and bowled"
+      - "hit wicket"
+    non_bowler_credited:
+      - "run out"
+      - "retired hurt"
+      - "retired out"
+      - "obstructing the field"
+      - "hit the ball twice"
+      - "timed out"
+      - "handled the ball"
+
+  match_type:
+    name: "Match Format"
+    description: "Official ICC or league match type."
+    allowed_values:
+      - "T20"
+      - "IT20"
+      - "ODI"
+      - "ODM"
+      - "Test"
+      - "MDM"
