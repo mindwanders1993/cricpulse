@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.ai.gemini_client import GeminiClient
-from src.api.routes import ai_router, analytics_router, health_router
+from src.api.routes import ai_router, analytics_router, health_router, internal_router
 from src.builder.schema import INIT_SCHEMA_SQL
 from src.config import get_settings
 from src.utils import setup_logging
@@ -65,6 +65,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(ai_router, prefix="/api/v1")
+    app.include_router(internal_router, prefix="/api/v1")
 
     return app
 

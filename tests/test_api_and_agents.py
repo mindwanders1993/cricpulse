@@ -6,10 +6,13 @@ from fastapi.testclient import TestClient
 
 from src.ai.chart_spec import ChartSpecGenerator
 from src.ai.guardrails import SQLSecurityGuardrail, SQLSecurityViolation
+from src.ai.narrative_storyteller import NarrativeStorytellerAgent
+from src.ai.supervisor import SupervisorAgent
 from src.ai.tactical_scout import TacticalScoutAgent
 from src.ai.text_to_sql import TextToSQLAgent
 from src.api.app import create_app
 from src.builder.loader import DuckDBLoader
+from src.config import get_settings
 from src.parsers.match_parser import MatchParser
 from src.parsers.register_parser import RegisterParser
 
@@ -196,3 +199,131 @@ def test_api_ai_scout_endpoint(api_client: TestClient):
     assert data["batter"] == "Virat Kohli"
     assert "metrics" in data
     assert "tactical_report" in data
+
+
+def test_narrative_storyteller_agent(populated_db_path: Path):
+    con = duckdb.connect(str(populated_db_path), read_only=True)
+    agent = NarrativeStorytellerAgent(con=con)
+
+    # Get sample match
+    match_row = con.execute("SELECT match_id FROM gold.dim_match LIMIT 1;").fetchone()
+    assert match_row is not None
+    match_id = str(match_row[0])
+
+    story = agent.generate_story(match_id=match_id)
+    assert story["match_id"] == match_id
+    assert "headline" in story
+    assert len(story["headline"]) > 0
+    assert "editorial_recap" in story
+    assert len(story["editorial_recap"]) > 0
+    assert story["chart_spec"] is not None
+    con.close()
+
+
+def test_supervisor_agent(populated_db_path: Path):
+    con = duckdb.connect(str(populated_db_path), read_only=True)
+    supervisor = SupervisorAgent(con=con)
+
+    # 1. Test intent classification
+    assert (
+        supervisor.classify_intent("Who scored the most runs in death overs?") == "ANALYTICAL_SQL"
+    )
+    assert supervisor.classify_intent("Rohit vs Starc in powerplay") == "TACTICAL_SCOUT"
+    assert supervisor.classify_intent("Recap match 1384400") == "NARRATIVE_STORY"
+
+    # 2. Test chat dispatch
+    res_sql = supervisor.chat("Who scored the most runs in death overs?")
+    assert res_sql["status"] == "success"
+    assert res_sql["intent"] == "analytical_sql"
+    assert res_sql["routed_agent"] == "TextToSQLAgent"
+    assert "reply" in res_sql
+
+    res_scout = supervisor.chat("Analyze Kohli vs Zampa matchup")
+    assert res_scout["status"] == "success"
+    assert res_scout["intent"] == "tactical_scout"
+    assert res_scout["routed_agent"] == "TacticalScoutAgent"
+
+    con.close()
+
+
+def test_api_ai_story_endpoint(api_client: TestClient, populated_db_path: Path):
+    con = duckdb.connect(str(populated_db_path), read_only=True)
+    match_row = con.execute("SELECT match_id FROM gold.dim_match LIMIT 1;").fetchone()
+    con.close()
+
+    assert match_row is not None
+    payload = {"match_id": str(match_row[0]), "focus": "turning points"}
+    resp = api_client.post("/api/v1/ai/story", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["match_id"] == str(match_row[0])
+    assert "headline" in data
+    assert "editorial_recap" in data
+
+
+def test_api_ai_chat_endpoint(api_client: TestClient):
+    payload = {"message": "Who scored the most runs?", "include_chart": True}
+    resp = api_client.post("/api/v1/ai/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "reply" in data
+    assert "routed_agent" in data
+
+
+def test_api_internal_sync_endpoint(api_client: TestClient, monkeypatch):
+    settings = get_settings()
+
+    # 1. In test environment, sync is allowed without token
+    monkeypatch.setattr(settings, "app_env", "test")
+    # Mock download_registers to avoid external HTTP in unit tests
+    from unittest.mock import patch
+
+    with (
+        patch(
+            "src.downloaders.register_downloader.RegisterDownloader.download_registers"
+        ) as mock_reg,
+        patch(
+            "src.downloaders.match_downloader.MatchDownloader.download_and_extract"
+        ) as mock_match,
+    ):
+        mock_reg.return_value = (
+            Path("tests/fixtures/sample_people.csv"),
+            Path("tests/fixtures/sample_names.csv"),
+        )
+        mock_match.return_value = [Path("tests/fixtures/sample_t20.json")]
+
+        resp = api_client.post("/api/v1/internal/sync-daily")
+        assert resp.status_code == 200
+        sync_data = resp.json()
+        assert sync_data["status"] == "success"
+        assert "matches_downloaded" in sync_data
+
+    # 2. In production environment with token, unauthorized without header
+    monkeypatch.setattr(settings, "app_env", "production")
+    monkeypatch.setattr(settings, "sync_secret_token", "super_secret_token_123")
+
+    resp_unauth = api_client.post("/api/v1/internal/sync-daily")
+    assert resp_unauth.status_code == 401
+
+    # 3. Authorized with correct header
+    with (
+        patch(
+            "src.downloaders.register_downloader.RegisterDownloader.download_registers"
+        ) as mock_reg,
+        patch(
+            "src.downloaders.match_downloader.MatchDownloader.download_and_extract"
+        ) as mock_match,
+    ):
+        mock_reg.return_value = (
+            Path("tests/fixtures/sample_people.csv"),
+            Path("tests/fixtures/sample_names.csv"),
+        )
+        mock_match.return_value = [Path("tests/fixtures/sample_t20.json")]
+
+        resp_auth = api_client.post(
+            "/api/v1/internal/sync-daily",
+            headers={"X-Sync-Token": "super_secret_token_123"},
+        )
+        assert resp_auth.status_code == 200
