@@ -1,18 +1,24 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from src.ai.guardrails import SQLSecurityViolation
+from src.ai.narrative_storyteller import NarrativeStorytellerAgent
+from src.ai.supervisor import SupervisorAgent
 from src.ai.tactical_scout import TacticalScoutAgent
 from src.ai.text_to_sql import TextToSQLAgent
 from src.api.schemas import (
+    AIChatRequest,
+    AIChatResponse,
     AIQueryRequest,
     AIQueryResponse,
     AIScoutRequest,
     AIScoutResponse,
+    AIStoryRequest,
+    AIStoryResponse,
 )
 from src.utils import setup_logging
 
 logger = setup_logging()
-router = APIRouter(prefix="/ai", tags=["Generative AI & Scouting"])
+router = APIRouter(prefix="/ai", tags=["Generative AI & Multi-Agent Swarm"])
 
 
 @router.post("/query", response_model=AIQueryResponse)
@@ -70,3 +76,60 @@ def generate_scouting_report(body: AIScoutRequest, request: Request) -> AIScoutR
         raise HTTPException(
             status_code=500, detail=f"Failed to generate scouting report: {e}"
         ) from e
+
+
+@router.post("/story", response_model=AIStoryResponse)
+def generate_match_story(body: AIStoryRequest, request: Request) -> AIStoryResponse:
+    """Generate narrative match recap, turning points, and momentum progression."""
+    con = request.app.state.db
+    gemini = getattr(request.app.state, "gemini", None)
+    agent = NarrativeStorytellerAgent(con=con, gemini_client=gemini)
+
+    try:
+        story = agent.generate_story(
+            match_id=body.match_id,
+            focus=body.focus,
+            include_chart=body.include_chart,
+        )
+        return AIStoryResponse(
+            status="success",
+            match_id=story["match_id"],
+            headline=story["headline"],
+            editorial_recap=story["editorial_recap"],
+            turning_points=story["turning_points"],
+            key_performers=story["key_performers"],
+            chart_spec=story["chart_spec"],
+        )
+    except Exception as e:
+        logger.error("ai_story_endpoint_failed", error=str(e), match_id=body.match_id)
+        raise HTTPException(status_code=500, detail=f"Failed to generate story: {e}") from e
+
+
+@router.post("/chat", response_model=AIChatResponse)
+def execute_ai_chat(body: AIChatRequest, request: Request) -> AIChatResponse:
+    """Unified conversational assistant routing across Text-to-SQL, Tactical Scout, and Storyteller."""
+    con = request.app.state.db
+    gemini = getattr(request.app.state, "gemini", None)
+    supervisor = SupervisorAgent(con=con, gemini_client=gemini)
+
+    try:
+        result = supervisor.chat(
+            message=body.message,
+            include_chart=body.include_chart,
+        )
+        return AIChatResponse(
+            status="success",
+            intent=result["intent"],
+            routed_agent=result["routed_agent"],
+            reply=result["reply"],
+            data=result["data"],
+            sql_executed=result["sql_executed"],
+            chart_spec=result["chart_spec"],
+        )
+    except SQLSecurityViolation as sec_err:
+        raise HTTPException(
+            status_code=400, detail=f"Security Guardrail Violation: {sec_err}"
+        ) from sec_err
+    except Exception as e:
+        logger.error("ai_chat_endpoint_failed", error=str(e), message=body.message)
+        raise HTTPException(status_code=500, detail=f"Failed to process chat: {e}") from e
