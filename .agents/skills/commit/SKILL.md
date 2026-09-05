@@ -22,11 +22,10 @@ When activated, execute these steps:
 4. **Execute**: If approved, run `git add .` and `git commit -m "<message>"`.
 
 5. **Pre-Commit Hook Failure Protocol**:
-   If `git commit` is **rejected by the pre-commit hook** (Ruff / ESLint), do NOT just re-run the commit blindly:
-   - Run the auto-remediation commands:
+   If `git commit` is **rejected by the pre-commit hook** (Ruff / linter), do NOT just re-run the commit blindly:
+   - Run the auto-remediation commands from the project root:
      ```bash
-     cd backend && source .venv/bin/activate && ruff check --fix . && ruff format .
-     cd frontend && npm run lint --fix 2>/dev/null || true
+     source .venv/bin/activate && ruff check --fix src tests scripts && ruff format src tests scripts
      ```
    - Run `git diff` and **show the user what was auto-fixed**.
    - Only after confirming the auto-fixes are safe, re-run `git add . && git commit -m "<message>"`.
