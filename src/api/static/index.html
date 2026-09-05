@@ -20,6 +20,8 @@
     --accent-soft:#1c2c22;
     --violet:#a599f2;
     --violet-soft:#241f3d;
+    --amber:#dba24a;
+    --amber-soft:#2e2410;
     --code-bg:#1e251c;
     --error:#e5766b;
   }
@@ -103,11 +105,11 @@
   .msg{
     display:flex;
     flex-direction:column;
-    gap:6px;
-    max-width:82%;
+    gap:8px;
+    max-width:88%;
   }
   .msg.user{align-self:flex-end; align-items:flex-end;}
-  .msg.assistant{align-self:flex-start; align-items:flex-start;}
+  .msg.assistant{align-self:flex-start; align-items:flex-start; width:88%;}
   .bubble{
     padding:11px 15px;
     border-radius:12px;
@@ -124,12 +126,20 @@
     background:var(--surface);
     border:1px solid var(--border);
     border-bottom-left-radius:3px;
+    white-space:normal;
   }
+  .msg.assistant .bubble p{margin:0 0 8px;}
+  .msg.assistant .bubble p:last-child{margin-bottom:0;}
+  .msg.assistant .bubble ul{margin:0 0 8px; padding-left:20px;}
+  .msg.assistant .bubble ul:last-child{margin-bottom:0;}
+  .msg.assistant .bubble li{margin-bottom:4px;}
   .msg.assistant .bubble.error{
     background:#2a1614;
     border-color:var(--error);
     color:var(--error);
+    white-space:pre-wrap;
   }
+  .tag-row{display:flex; gap:6px; flex-wrap:wrap; align-items:center;}
   .agent-tag{
     font-family:"IBM Plex Mono", ui-monospace, monospace;
     font-size:10.5px;
@@ -141,22 +151,93 @@
     background:var(--violet-soft);
     border-radius:5px;
   }
-  .sql-block{
+  .coverage-tag{
     font-family:"IBM Plex Mono", ui-monospace, monospace;
-    font-size:12px;
-    background:var(--code-bg);
+    font-size:10.5px;
+    color:var(--amber);
+    padding:2px 8px;
+    border:1px solid var(--amber-soft);
+    background:var(--amber-soft);
+    border-radius:5px;
+  }
+
+  .kpi-row{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));
+    gap:8px;
+    width:100%;
+  }
+  .kpi-tile{
+    background:var(--surface);
     border:1px solid var(--border);
     border-radius:8px;
-    padding:10px 12px;
+    padding:9px 12px;
+  }
+  .kpi-tile .kpi-label{
+    font-size:10.5px;
+    color:var(--ink-muted);
+    text-transform:uppercase;
+    letter-spacing:0.03em;
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+  }
+  .kpi-tile .kpi-value{
+    font-size:17px;
+    font-weight:600;
+    font-variant-numeric: tabular-nums;
+    margin-top:2px;
+  }
+
+  .chart-row{
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    width:100%;
+  }
+  .chart-box{
+    border:1px solid var(--border);
+    border-radius:8px;
+    background:var(--surface);
+    padding:8px;
+    max-width:100%;
+    overflow-x:auto;
+  }
+
+  details.sql-details{
+    width:100%;
+    border:1px solid var(--border);
+    border-radius:8px;
+    background:var(--code-bg);
+    overflow:hidden;
+  }
+  details.sql-details summary{
+    padding:8px 12px;
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:11.5px;
+    color:var(--ink-muted);
+    cursor:pointer;
+    list-style:none;
+    user-select:none;
+  }
+  details.sql-details summary::-webkit-details-marker{display:none;}
+  details.sql-details summary::before{content:"▸ "; color:var(--accent);}
+  details.sql-details[open] summary::before{content:"▾ "; color:var(--accent);}
+  details.sql-details .sql-block{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:12px;
+    padding:0 12px 12px;
     overflow-x:auto;
     color:var(--ink-muted);
-    max-width:100%;
+    border-top:1px solid var(--border);
+    margin-top:2px;
+    padding-top:10px;
   }
+
   .data-table-wrap{
     overflow-x:auto;
     border:1px solid var(--border);
     border-radius:8px;
     max-width:100%;
+    width:100%;
   }
   table{border-collapse:collapse; width:100%; font-size:12.5px;}
   th,td{
@@ -176,18 +257,53 @@
     letter-spacing:0.03em;
   }
   tr:last-child td{border-bottom:none;}
-  .chart-box{
-    border:1px solid var(--border);
-    border-radius:8px;
-    background:var(--surface);
-    padding:8px;
-    max-width:100%;
-    overflow-x:auto;
+  .table-note{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:10.5px;
+    color:var(--ink-muted);
+    padding:6px 2px 0;
   }
+
+  .followup-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    width:100%;
+  }
+  .followup-chip{
+    background:var(--surface);
+    border:1px solid var(--border);
+    color:var(--ink);
+    padding:6px 12px;
+    border-radius:999px;
+    font-size:12.5px;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .followup-chip:hover{border-color:var(--accent); color:var(--accent);}
+
   .typing{
     color:var(--ink-muted);
     font-size:13px;
     font-style:italic;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .typing-dots{display:inline-flex; gap:3px;}
+  .typing-dots span{
+    width:5px; height:5px; border-radius:50%;
+    background:var(--ink-muted);
+    animation:pulse 1.2s infinite ease-in-out;
+  }
+  .typing-dots span:nth-child(2){animation-delay:0.2s;}
+  .typing-dots span:nth-child(3){animation-delay:0.4s;}
+  @keyframes pulse{
+    0%, 80%, 100%{opacity:0.25; transform:scale(0.85);}
+    40%{opacity:1; transform:scale(1);}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .typing-dots span{animation:none; opacity:0.7;}
   }
 
   footer{
@@ -273,6 +389,9 @@ const sendBtn = document.getElementById('send-btn');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 
+const RATE_HINTS = ['rate', 'average', 'avg', 'percentage', 'pct', 'economy', 'index'];
+const INT_HINTS = ['id', 'count', 'matches', 'balls', 'innings', 'year'];
+
 async function checkHealth() {
   try {
     const res = await fetch('/ready');
@@ -309,39 +428,146 @@ function addTypingIndicator() {
   const msg = document.createElement('div');
   msg.className = 'msg assistant';
   msg.id = 'typing-indicator';
-  msg.innerHTML = `<div class="typing">supervisor is routing your question…</div>`;
+  msg.innerHTML = `<div class="typing">supervisor is routing your question<span class="typing-dots"><span></span><span></span><span></span></span></div>`;
   chatEl.appendChild(msg);
   scrollToBottom();
   return msg;
+}
+
+// Small hand-rolled renderer: consecutive "- " lines become a real <ul>, everything else a <p>.
+// Bullets only — not a general markdown parser.
+function renderReplyMarkdown(text) {
+  const wrap = document.createElement('div');
+  const lines = text.split('\n');
+  let listBuf = [];
+
+  function flushList() {
+    if (!listBuf.length) return;
+    const ul = document.createElement('ul');
+    listBuf.forEach(item => {
+      const li = document.createElement('li');
+      li.textContent = item;
+      ul.appendChild(li);
+    });
+    wrap.appendChild(ul);
+    listBuf = [];
+  }
+
+  lines.forEach(rawLine => {
+    const line = rawLine.trim();
+    if (!line) { flushList(); return; }
+    if (line.startsWith('- ')) {
+      listBuf.push(line.slice(2).trim());
+    } else {
+      flushList();
+      const p = document.createElement('p');
+      p.textContent = line;
+      wrap.appendChild(p);
+    }
+  });
+  flushList();
+  return wrap;
+}
+
+function formatCell(colName, value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'number') return String(value);
+  const lower = colName.toLowerCase();
+  if (INT_HINTS.some(h => lower.includes(h)) && Number.isInteger(value)) {
+    return value.toLocaleString();
+  }
+  if (RATE_HINTS.some(h => lower.includes(h))) {
+    return value.toFixed(2);
+  }
+  return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
 }
 
 function renderTable(rows) {
   if (!rows || !rows.length) return null;
   const cols = Object.keys(rows[0]);
   const wrap = document.createElement('div');
-  wrap.className = 'data-table-wrap';
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'data-table-wrap';
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
   const tbody = document.createElement('tbody');
-  rows.slice(0, 50).forEach(r => {
+  const shown = rows.slice(0, 50);
+  shown.forEach(r => {
     const tr = document.createElement('tr');
-    tr.innerHTML = cols.map(c => `<td>${r[c] === null || r[c] === undefined ? '' : String(r[c])}</td>`).join('');
+    tr.innerHTML = cols.map(c => `<td>${formatCell(c, r[c])}</td>`).join('');
     tbody.appendChild(tr);
   });
   table.appendChild(thead);
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  tableWrap.appendChild(table);
+  wrap.appendChild(tableWrap);
+
+  if (rows.length > 50) {
+    const note = document.createElement('div');
+    note.className = 'table-note';
+    note.textContent = `Showing 50 of ${rows.length} rows`;
+    wrap.appendChild(note);
+  }
   return wrap;
+}
+
+function renderKeyPoints(keyPoints) {
+  if (!keyPoints || !keyPoints.length) return null;
+  const row = document.createElement('div');
+  row.className = 'kpi-row';
+  keyPoints.forEach(kp => {
+    const tile = document.createElement('div');
+    tile.className = 'kpi-tile';
+    tile.innerHTML = `<div class="kpi-label"></div><div class="kpi-value"></div>`;
+    tile.querySelector('.kpi-label').textContent = kp.label;
+    tile.querySelector('.kpi-value').textContent = kp.value;
+    row.appendChild(tile);
+  });
+  return row;
+}
+
+function renderCharts(chartSpecs) {
+  if (!chartSpecs || !chartSpecs.length) return null;
+  const row = document.createElement('div');
+  row.className = 'chart-row';
+  chartSpecs.forEach(spec => {
+    const box = document.createElement('div');
+    box.className = 'chart-box';
+    row.appendChild(box);
+    if (window.vegaEmbed) {
+      vegaEmbed(box, spec, { actions: false, theme: 'dark' }).catch(console.error);
+    }
+  });
+  return row;
+}
+
+function renderFollowUps(followUps) {
+  if (!followUps || !followUps.length) return null;
+  const row = document.createElement('div');
+  row.className = 'followup-row';
+  followUps.forEach(q => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'followup-chip';
+    chip.textContent = q;
+    chip.addEventListener('click', () => {
+      input.value = q;
+      form.dispatchEvent(new Event('submit'));
+    });
+    row.appendChild(chip);
+  });
+  return row;
 }
 
 function addAssistantMessage(result, isError) {
   const msg = document.createElement('div');
   msg.className = 'msg assistant';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble' + (isError ? ' error' : '');
 
   if (isError) {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble error';
     bubble.textContent = result;
     msg.appendChild(bubble);
     chatEl.appendChild(msg);
@@ -349,22 +575,32 @@ function addAssistantMessage(result, isError) {
     return;
   }
 
+  const tagRow = document.createElement('div');
+  tagRow.className = 'tag-row';
   if (result.routed_agent) {
     const tag = document.createElement('span');
     tag.className = 'agent-tag';
     tag.textContent = result.routed_agent;
-    msg.appendChild(tag);
+    tagRow.appendChild(tag);
   }
+  if (result.coverage) {
+    const cov = document.createElement('span');
+    cov.className = 'coverage-tag';
+    cov.textContent = result.coverage;
+    tagRow.appendChild(cov);
+  }
+  if (tagRow.children.length) msg.appendChild(tagRow);
 
-  bubble.textContent = result.reply;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.appendChild(renderReplyMarkdown(result.reply || ''));
   msg.appendChild(bubble);
 
-  if (result.sql_executed) {
-    const sql = document.createElement('div');
-    sql.className = 'sql-block';
-    sql.textContent = result.sql_executed;
-    msg.appendChild(sql);
-  }
+  const kpiRow = renderKeyPoints(result.key_points);
+  if (kpiRow) msg.appendChild(kpiRow);
+
+  const chartRow = renderCharts(result.chart_specs);
+  if (chartRow) msg.appendChild(chartRow);
 
   const rows = Array.isArray(result.data) ? result.data : null;
   if (rows && rows.length) {
@@ -372,14 +608,21 @@ function addAssistantMessage(result, isError) {
     if (table) msg.appendChild(table);
   }
 
-  if (result.chart_spec) {
-    const chartBox = document.createElement('div');
-    chartBox.className = 'chart-box';
-    msg.appendChild(chartBox);
-    if (window.vegaEmbed) {
-      vegaEmbed(chartBox, result.chart_spec, { actions: false, theme: 'dark' }).catch(console.error);
-    }
+  if (result.sql_executed) {
+    const details = document.createElement('details');
+    details.className = 'sql-details';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Show query';
+    const sql = document.createElement('div');
+    sql.className = 'sql-block';
+    sql.textContent = result.sql_executed;
+    details.appendChild(summary);
+    details.appendChild(sql);
+    msg.appendChild(details);
   }
+
+  const followUpRow = renderFollowUps(result.follow_ups);
+  if (followUpRow) msg.appendChild(followUpRow);
 
   chatEl.appendChild(msg);
   scrollToBottom();
@@ -392,6 +635,7 @@ form.addEventListener('submit', async (e) => {
 
   addUserMessage(message);
   input.value = '';
+  input.style.height = 'auto';
   sendBtn.disabled = true;
   const indicator = addTypingIndicator();
 

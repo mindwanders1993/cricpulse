@@ -36,7 +36,10 @@ def execute_ai_query(body: AIQueryRequest, request: Request) -> AIQueryResponse:
             insight=result["insight"],
             sql_executed=result["sql_executed"],
             rows=result["rows"],
-            chart_spec=result["chart_spec"] if body.include_chart else None,
+            chart_specs=result["chart_specs"] if body.include_chart else [],
+            follow_ups=result["follow_ups"],
+            key_points=result["key_points"],
+            coverage=result["coverage"],
         )
     except SQLSecurityViolation as sec_err:
         raise HTTPException(
@@ -124,7 +127,10 @@ def execute_ai_chat(body: AIChatRequest, request: Request) -> AIChatResponse:
             reply=result["reply"],
             data=result["data"],
             sql_executed=result["sql_executed"],
-            chart_spec=result["chart_spec"],
+            chart_specs=result["chart_specs"],
+            follow_ups=result["follow_ups"],
+            key_points=result["key_points"],
+            coverage=result["coverage"],
         )
     except SQLSecurityViolation as sec_err:
         raise HTTPException(

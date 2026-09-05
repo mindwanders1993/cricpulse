@@ -92,6 +92,7 @@ class SupervisorAgent:
                 bowler_name=bowler_name,
                 phase=phase,
             )
+            other_phases = [p for p in ("powerplay", "middle", "death") if p != phase][:2]
             return {
                 "status": "success",
                 "intent": "tactical_scout",
@@ -99,7 +100,10 @@ class SupervisorAgent:
                 "reply": report["tactical_report"],
                 "data": report["metrics"],
                 "sql_executed": None,
-                "chart_spec": None,
+                "chart_specs": [],
+                "follow_ups": [f"Only in the {p} overs?" for p in other_phases],
+                "key_points": [],
+                "coverage": f"{report['match_type']} matches only",
             }
 
         elif intent == "NARRATIVE_STORY":
@@ -128,7 +132,10 @@ class SupervisorAgent:
                     "key_performers": story["key_performers"],
                 },
                 "sql_executed": None,
-                "chart_spec": story["chart_spec"],
+                "chart_specs": [story["chart_spec"]] if story["chart_spec"] else [],
+                "follow_ups": ["What were the key turning points?", "Who was the top performer?"],
+                "key_points": [],
+                "coverage": None,
             }
 
         elif intent == "ANALYTICAL_SQL":
@@ -140,7 +147,10 @@ class SupervisorAgent:
                 "reply": result["insight"],
                 "data": result["rows"],
                 "sql_executed": result["sql_executed"],
-                "chart_spec": result["chart_spec"] if include_chart else None,
+                "chart_specs": result["chart_specs"] if include_chart else [],
+                "follow_ups": result["follow_ups"],
+                "key_points": result["key_points"],
+                "coverage": result["coverage"],
             }
 
         else:
@@ -157,5 +167,12 @@ class SupervisorAgent:
                 or "Hello! I am CricPulse Assistant. How can I help you explore cricket data?",
                 "data": None,
                 "sql_executed": None,
-                "chart_spec": None,
+                "chart_specs": [],
+                "follow_ups": [
+                    "Who has the highest strike rate in death overs?",
+                    "Kohli vs Bumrah",
+                    "Give me the top 10 wicket takers of all time",
+                ],
+                "key_points": [],
+                "coverage": None,
             }

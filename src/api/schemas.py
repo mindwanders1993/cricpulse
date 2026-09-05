@@ -25,7 +25,10 @@ class AIQueryResponse(BaseModel):
     insight: str
     sql_executed: str
     rows: list[dict[str, Any]]
-    chart_spec: dict[str, Any] | None = None
+    chart_specs: list[dict[str, Any]] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    key_points: list[dict[str, str]] = Field(default_factory=list)
+    coverage: str | None = None
 
 
 class AIScoutRequest(BaseModel):
@@ -150,4 +153,7 @@ class AIChatResponse(BaseModel):
     reply: str
     data: dict[str, Any] | list[dict[str, Any]] | None = None
     sql_executed: str | None = None
-    chart_spec: dict[str, Any] | None = None
+    chart_specs: list[dict[str, Any]] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+    key_points: list[dict[str, str]] = Field(default_factory=list)
+    coverage: str | None = None
