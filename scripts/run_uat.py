@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import duckdb
 from fastapi.testclient import TestClient
 from rich.console import Console
 from rich.table import Table
@@ -29,8 +30,15 @@ def ensure_uat_database() -> Path:
     published_db = settings.published_dir / "cricket_latest.duckdb"
 
     if published_db.exists():
-        console.print(f"[green]✓ Found published DuckDB lakehouse:[/green] {published_db}")
-        return published_db
+        try:
+            conn = duckdb.connect(str(published_db), read_only=True)
+            conn.close()
+            console.print(f"[green]✓ Found published DuckDB lakehouse:[/green] {published_db}")
+            return published_db
+        except Exception:
+            console.print(
+                f"[yellow]⚠️ {published_db} is locked by an external process (e.g. DBeaver). Falling back to isolated UAT database.[/yellow]"
+            )
 
     uat_db = settings.data_dir / "uat_test.duckdb"
     console.print(f"[yellow]Building UAT database from test fixtures at {uat_db}...[/yellow]")

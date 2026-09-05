@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy pyproject.toml and source
-COPY pyproject.toml .
+COPY pyproject.toml README.md .
 COPY src/ ./src/
 COPY conf/ ./conf/
 

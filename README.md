@@ -22,62 +22,82 @@ This redesigned architecture addresses the limitations of monolithic, heavy data
 
 ```mermaid
 flowchart TD
-    %% STORAGE & DATA BUS
-    subgraph StorageBus["SHARED IMMUTABLE DATA BUS (Google Cloud Storage - gs://kaizencodes-cricket-data/)"]
-        Raw["raw/ (Cricsheet JSONs & Register CSVs)"]
-        Parquet["curated/parquet/ (Partitioned Silver/Gold Parquets)"]
-        DuckDBSnap["published/cricket_latest.duckdb (Zero-Lock Serving DB)"]
-        SemCatalog["metadata/semantic_catalog.yaml (Metric Definitions & DDLs)"]
+    %% EXTERNAL SOURCE
+    Cricsheet["Cricsheet.org (Raw JSON matches & Register CSVs)"]
+
+    %% CURRENT STORAGE (local filesystem, single container volume)
+    subgraph StorageBus["CURRENT DATA BUS (Local Filesystem inside the container)"]
+        Ledger["data/ledger.db (SQLite - SHA-256 idempotency ledger)"]
+        DuckDBSnap["data/published/cricket_latest.duckdb (Zero-Lock Serving DB)"]
+        Parquet["data/parquet/gold/ (Gold Parquet exports)"]
     end
+    GCSPlanned["gs://kaizencodes-cricket-data/ (Planned GCS Data Bus - not yet wired)"]
+    StorageBus -.->|target migration| GCSPlanned
 
     %% SUBSYSTEM 1: DE PIPELINE
-    subgraph Subsystem1["SUBSYSTEM 1: DE INGESTION PIPELINE (Headless Cloud Run Job / Actions)"]
+    subgraph Subsystem1["SUBSYSTEM 1: HEADLESS DE INGESTION PIPELINE (same image, run as Cloud Run Job)"]
         direction TB
-        Trigger["Cloud Scheduler (Daily 02:00 UTC)"]
-        Runner["Polars Delta Sync & Normalizer"]
-        DQ["Data Quality & Schema Drift Gates"]
-        
-        Trigger --> Runner --> DQ
-        DQ -->|Publish Artifacts| StorageBus
+        Downloaders["MatchDownloader / RegisterDownloader"]
+        Parsers["Polars Parsers (match_parser, register_parser)"]
+        Builder["loader.py - builds DuckDB star schema (6 dims / 5 facts / 7 marts)"]
+        Publisher["publisher.py - quality_gates.py, then promote snapshot"]
+
+        Cricsheet --> Downloaders --> Parsers --> Builder --> Publisher
+        Publisher --> Ledger
+        Publisher -->|atomic promote| DuckDBSnap
+        Publisher -->|export| Parquet
     end
 
-    %% SUBSYSTEM 2: AI-READY PREPARATION
-    subgraph Subsystem2["SUBSYSTEM 2: AI-READY SEMANTIC & METRIC LAYER"]
+    %% SUBSYSTEM 2: AI-READY PREPARATION (in-process library, not a service)
+    subgraph Subsystem2["SUBSYSTEM 2: AI-READY SEMANTIC LAYER (in-process Python library)"]
         direction TB
-        Sem["YAML Metric Store (Strike Rate, Economy, Dot %, Clutch Index)"]
-        Crosswalk["Entity Resolution (V Kohli ◄► Virat Kohli ◄► ESPNcricinfo)"]
-        GoldenSQL["Few-Shot DDL & Golden Query Store"]
-        
-        StorageBus --> Sem & Crosswalk & GoldenSQL
+        Sem["semantic_catalog.yaml + catalog.py (Canonical Metric Formulas)"]
+        Crosswalk["resolver.py - 3-tier Entity Resolution (exact / alias / fuzzy, in DuckDB)"]
+        GoldenSQL["golden_queries.py - Few-Shot SQL Store"]
     end
 
     %% SUBSYSTEM 3: GEN AI MICROSERVICE
-    subgraph Subsystem3["SUBSYSTEM 3: GENERATIVE AI MICROSERVICE (Cloud Run: cricket-api)"]
+    subgraph Subsystem3["SUBSYSTEM 3: GENERATIVE AI MICROSERVICE (Cloud Run service: cricpulse-api)"]
         direction TB
-        API["FastAPI Gateway (Scales 0 → 10 Nodes)"]
-        
-        subgraph Agents["Multi-Agent Swarm (LangGraph / Gemini 2.0 Flash)"]
-            A1["Text-to-SQL Agent (sqlglot AST Guardrails)"]
-            A2["Tactical Scouting & Matchup Agent"]
-            A3["Narrative Storyteller Agent"]
+        API["FastAPI app.py (health / analytics / ai / internal routes)"]
+        Supervisor["SupervisorAgent - regex + LLM-fallback intent router"]
+
+        subgraph Agents["Agent Swarm (custom Python, no LangGraph)"]
+            A1["text_to_sql.py (guardrails.py sqlglot AST checks - read-only SELECT, gold.* allowlist)"]
+            A2["tactical_scout.py"]
+            A3["narrative_storyteller.py"]
         end
-        
-        MemDB["In-Memory DuckDB Engine"]
-        
-        API --> Agents
+
+        MemDB["DuckDB connection opened read-only from snapshot (app.state.db)"]
+        Gemini["Gemini 2.0 Flash REST API (generativelanguage.googleapis.com)"]
+        SyncHook["/api/v1/internal/sync-daily webhook (X-Sync-Token auth)"]
+
+        API --> Supervisor --> Agents
         Agents <--> Sem & Crosswalk & GoldenSQL
-        Agents <--> MemDB
-        MemDB -.->|Read Snapshot| StorageBus
+        Agents --> MemDB
+        Agents -->|LLM calls| Gemini
+        DuckDBSnap -.->|read snapshot at startup| MemDB
+        API --> SyncHook
     end
+
+    %% RUNTIME INTEGRATION LOOP
+    Scheduler["Cloud Scheduler"] -->|triggers| SyncHook
+    SyncHook -.->|re-runs pipeline synchronously, then hot-swaps connection| Subsystem1
+    SyncHook -.-> MemDB
 
     %% CLIENT / CONSUMPTION
-    subgraph Client["CONSUMPTION & CLIENTS"]
-        WebUI["KaizenCodes Next.js Web App (/cricket)"]
-        BI["Metabase / DuckDB Web UI"]
-    end
+    Client["API Consumers (Web/BI clients)"] -->|HTTPS| API
 
-    WebUI -->|HTTPS / WSS| API
-    StorageBus -.->|Direct Read| BI
+    %% DEPLOYMENT
+    subgraph Deploy["CI/CD (GitHub Actions)"]
+        direction LR
+        CI["ci.yml: ruff + pytest (Python 3.11-3.13)"]
+        CD["deploy.yml: build image on push to main"]
+        AR["Google Artifact Registry"]
+        SM["GCP Secret Manager (GEMINI_API_KEY, SYNC_SECRET_TOKEN)"]
+        CI --> CD --> AR --> Subsystem3
+        SM -.->|injected env| Subsystem3
+    end
 ```
 
 ---
