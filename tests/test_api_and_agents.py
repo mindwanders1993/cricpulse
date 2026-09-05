@@ -105,11 +105,29 @@ def test_chart_spec_generator():
         {"player_name": "Nicholas Pooran", "strike_rate": 198.6, "balls": 148},
         {"player_name": "Dinesh Karthik", "strike_rate": 192.1, "balls": 114},
     ]
-    spec = ChartSpecGenerator.generate_spec(rows, title="Top Strike Rates")
-    assert spec is not None
-    assert spec["mark"]["type"] == "bar"
-    assert spec["encoding"]["x"]["field"] == "player_name"
-    assert spec["encoding"]["y"]["field"] == "strike_rate"
+    specs = ChartSpecGenerator.generate_spec(rows, subtitle="Top Strike Rates")
+    assert len(specs) == 1
+    assert specs[0]["mark"]["type"] == "bar"
+    assert specs[0]["encoding"]["x"]["field"] == "player_name"
+    assert specs[0]["encoding"]["y"]["field"] == "strike_rate"
+
+
+def test_chart_spec_generator_time_series_uses_line_chart():
+    rows = [
+        {"match_year": "2020", "total_runs": 1319, "balls_faced": 1346, "avg": 39.9},
+        {"match_year": "2021", "total_runs": 1369, "balls_faced": 1929, "avg": 34.2},
+        {"match_year": "2022", "total_runs": 1567, "balls_faced": 1817, "avg": 31.9},
+    ]
+    specs = ChartSpecGenerator.generate_spec(rows)
+    assert len(specs) >= 1
+    for spec in specs:
+        assert spec["mark"]["type"] == "line"
+        assert spec["encoding"]["x"]["field"] == "match_year"
+        assert "sort" not in spec["encoding"]["x"]
+    metrics = {spec["encoding"]["y"]["field"] for spec in specs}
+    assert "balls_faced" not in metrics  # denominator-like column filtered out
+    assert "total_runs" in metrics
+    assert "avg" in metrics
 
 
 # ==========================================

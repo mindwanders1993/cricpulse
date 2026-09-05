@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CricPulse AI</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vega/5.30.0/vega.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vega-lite/5.21.0/vega-lite.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vega-embed/6.26.0/vega-embed.min.js"></script>
+<style>
+  :root{
+    --bg:#12160f;
+    --surface:#181e17;
+    --surface-2:#1e251c;
+    --border:#33402f;
+    --ink:#eef0e8;
+    --ink-muted:#a3ae9c;
+    --accent:#5fb787;
+    --accent-soft:#1c2c22;
+    --violet:#a599f2;
+    --violet-soft:#241f3d;
+    --code-bg:#1e251c;
+    --error:#e5766b;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    display:flex;
+    flex-direction:column;
+  }
+  header{
+    padding:16px 24px;
+    border-bottom:1px solid var(--border);
+    display:flex;
+    align-items:baseline;
+    gap:12px;
+    flex:none;
+  }
+  header h1{
+    font-size:16px;
+    font-weight:700;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  header .sub{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:11px;
+    color:var(--ink-muted);
+    letter-spacing:0.03em;
+  }
+  #status-dot{
+    width:7px;height:7px;border-radius:50%;
+    background:var(--ink-muted);
+    display:inline-block;
+    margin-right:6px;
+  }
+  #status-dot.ok{background:var(--accent);}
+  #status-dot.err{background:var(--error);}
+
+  main{
+    flex:1;
+    overflow-y:auto;
+    padding:24px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    max-width:900px;
+    width:100%;
+    margin:0 auto;
+  }
+  .empty-state{
+    margin:auto;
+    text-align:center;
+    color:var(--ink-muted);
+    font-size:13.5px;
+    max-width:46ch;
+    line-height:1.6;
+  }
+  .empty-state .examples{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin-top:18px;
+  }
+  .example-btn{
+    background:var(--surface);
+    border:1px solid var(--border);
+    color:var(--ink);
+    padding:9px 14px;
+    border-radius:8px;
+    font-size:13px;
+    text-align:left;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .example-btn:hover{border-color:var(--accent);}
+
+  .msg{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    max-width:82%;
+  }
+  .msg.user{align-self:flex-end; align-items:flex-end;}
+  .msg.assistant{align-self:flex-start; align-items:flex-start;}
+  .bubble{
+    padding:11px 15px;
+    border-radius:12px;
+    font-size:14.5px;
+    line-height:1.55;
+    white-space:pre-wrap;
+  }
+  .msg.user .bubble{
+    background:var(--accent-soft);
+    border:1px solid var(--accent);
+    border-bottom-right-radius:3px;
+  }
+  .msg.assistant .bubble{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-bottom-left-radius:3px;
+  }
+  .msg.assistant .bubble.error{
+    background:#2a1614;
+    border-color:var(--error);
+    color:var(--error);
+  }
+  .agent-tag{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:10.5px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    color:var(--violet);
+    padding:2px 8px;
+    border:1px solid var(--violet-soft);
+    background:var(--violet-soft);
+    border-radius:5px;
+  }
+  .sql-block{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:12px;
+    background:var(--code-bg);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:10px 12px;
+    overflow-x:auto;
+    color:var(--ink-muted);
+    max-width:100%;
+  }
+  .data-table-wrap{
+    overflow-x:auto;
+    border:1px solid var(--border);
+    border-radius:8px;
+    max-width:100%;
+  }
+  table{border-collapse:collapse; width:100%; font-size:12.5px;}
+  th,td{
+    padding:7px 12px;
+    text-align:left;
+    border-bottom:1px solid var(--border);
+    white-space:nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  th{
+    background:var(--surface-2);
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-weight:500;
+    color:var(--ink-muted);
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.03em;
+  }
+  tr:last-child td{border-bottom:none;}
+  .chart-box{
+    border:1px solid var(--border);
+    border-radius:8px;
+    background:var(--surface);
+    padding:8px;
+    max-width:100%;
+    overflow-x:auto;
+  }
+  .typing{
+    color:var(--ink-muted);
+    font-size:13px;
+    font-style:italic;
+  }
+
+  footer{
+    flex:none;
+    border-top:1px solid var(--border);
+    padding:14px 24px 20px;
+  }
+  form{
+    max-width:900px;
+    margin:0 auto;
+    display:flex;
+    gap:10px;
+    align-items:flex-end;
+  }
+  textarea{
+    flex:1;
+    resize:none;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    color:var(--ink);
+    font-family:inherit;
+    font-size:14px;
+    padding:11px 14px;
+    line-height:1.4;
+    max-height:120px;
+  }
+  textarea:focus{outline:none; border-color:var(--accent);}
+  button[type="submit"]{
+    background:var(--accent);
+    color:#0d130e;
+    border:none;
+    border-radius:10px;
+    padding:0 20px;
+    height:44px;
+    font-weight:600;
+    font-size:14px;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  button[type="submit"]:disabled{opacity:0.5; cursor:default;}
+  .hint{
+    font-size:11px;
+    color:var(--ink-muted);
+    margin:8px auto 0;
+    max-width:900px;
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🏏 CricPulse AI</h1>
+    <span class="sub"><span id="status-dot"></span><span id="status-text">checking…</span></span>
+  </header>
+
+  <main id="chat">
+    <div class="empty-state" id="empty-state">
+      Ask about any of the 21,000+ Cricsheet matches. The supervisor agent routes your question
+      to the text-to-SQL, tactical scout, or storyteller specialist automatically.
+      <div class="examples">
+        <button class="example-btn" data-q="Who has the highest strike rate in death overs?">Who has the highest strike rate in death overs?</button>
+        <button class="example-btn" data-q="Kohli vs Bumrah">Kohli vs Bumrah</button>
+        <button class="example-btn" data-q="Give me the top 10 wicket takers of all time">Give me the top 10 wicket takers of all time</button>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <form id="chat-form">
+      <textarea id="chat-input" rows="1" placeholder="Ask a cricket question…" autofocus></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+    <div class="hint">POST /api/v1/ai/chat · routes to text_to_sql / tactical_scout / narrative_story</div>
+  </footer>
+
+<script>
+const chatEl = document.getElementById('chat');
+const emptyState = document.getElementById('empty-state');
+const form = document.getElementById('chat-form');
+const input = document.getElementById('chat-input');
+const sendBtn = document.getElementById('send-btn');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+
+async function checkHealth() {
+  try {
+    const res = await fetch('/ready');
+    const data = await res.json();
+    if (data.status === 'ready') {
+      statusDot.className = 'ok';
+      statusText.textContent = `ready · ${data.tables_count} gold tables`;
+    } else {
+      statusDot.className = 'err';
+      statusText.textContent = data.status;
+    }
+  } catch {
+    statusDot.className = 'err';
+    statusText.textContent = 'API unreachable';
+  }
+}
+checkHealth();
+
+function scrollToBottom() {
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function addUserMessage(text) {
+  emptyState.remove();
+  const msg = document.createElement('div');
+  msg.className = 'msg user';
+  msg.innerHTML = `<div class="bubble"></div>`;
+  msg.querySelector('.bubble').textContent = text;
+  chatEl.appendChild(msg);
+  scrollToBottom();
+}
+
+function addTypingIndicator() {
+  const msg = document.createElement('div');
+  msg.className = 'msg assistant';
+  msg.id = 'typing-indicator';
+  msg.innerHTML = `<div class="typing">supervisor is routing your question…</div>`;
+  chatEl.appendChild(msg);
+  scrollToBottom();
+  return msg;
+}
+
+function renderTable(rows) {
+  if (!rows || !rows.length) return null;
+  const cols = Object.keys(rows[0]);
+  const wrap = document.createElement('div');
+  wrap.className = 'data-table-wrap';
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+  const tbody = document.createElement('tbody');
+  rows.slice(0, 50).forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = cols.map(c => `<td>${r[c] === null || r[c] === undefined ? '' : String(r[c])}</td>`).join('');
+    tbody.appendChild(tr);
+  });
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function addAssistantMessage(result, isError) {
+  const msg = document.createElement('div');
+  msg.className = 'msg assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble' + (isError ? ' error' : '');
+
+  if (isError) {
+    bubble.textContent = result;
+    msg.appendChild(bubble);
+    chatEl.appendChild(msg);
+    scrollToBottom();
+    return;
+  }
+
+  if (result.routed_agent) {
+    const tag = document.createElement('span');
+    tag.className = 'agent-tag';
+    tag.textContent = result.routed_agent;
+    msg.appendChild(tag);
+  }
+
+  bubble.textContent = result.reply;
+  msg.appendChild(bubble);
+
+  if (result.sql_executed) {
+    const sql = document.createElement('div');
+    sql.className = 'sql-block';
+    sql.textContent = result.sql_executed;
+    msg.appendChild(sql);
+  }
+
+  const rows = Array.isArray(result.data) ? result.data : null;
+  if (rows && rows.length) {
+    const table = renderTable(rows);
+    if (table) msg.appendChild(table);
+  }
+
+  if (result.chart_spec) {
+    const chartBox = document.createElement('div');
+    chartBox.className = 'chart-box';
+    msg.appendChild(chartBox);
+    if (window.vegaEmbed) {
+      vegaEmbed(chartBox, result.chart_spec, { actions: false, theme: 'dark' }).catch(console.error);
+    }
+  }
+
+  chatEl.appendChild(msg);
+  scrollToBottom();
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const message = input.value.trim();
+  if (!message) return;
+
+  addUserMessage(message);
+  input.value = '';
+  sendBtn.disabled = true;
+  const indicator = addTypingIndicator();
+
+  try {
+    const res = await fetch('/api/v1/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, include_chart: true }),
+    });
+    const data = await res.json();
+    indicator.remove();
+    if (!res.ok) {
+      addAssistantMessage(data.detail || `Request failed (${res.status})`, true);
+    } else {
+      addAssistantMessage(data, false);
+    }
+  } catch (err) {
+    indicator.remove();
+    addAssistantMessage('Network error: ' + err.message, true);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+});
+
+document.querySelectorAll('.example-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    input.value = btn.dataset.q;
+    form.dispatchEvent(new Event('submit'));
+  });
+});
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    form.dispatchEvent(new Event('submit'));
+  }
+});
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+});
+</script>
+</body>
+</html>

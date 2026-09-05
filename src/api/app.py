@@ -4,6 +4,7 @@ from pathlib import Path
 import duckdb
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from src.ai.gemini_client import GeminiClient
 from src.api.routes import ai_router, analytics_router, health_router, internal_router
@@ -66,6 +67,10 @@ def create_app(
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(ai_router, prefix="/api/v1")
     app.include_router(internal_router, prefix="/api/v1")
+
+    # Chat UI (served same-origin so it can call the API routes above directly)
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/ui", StaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
 

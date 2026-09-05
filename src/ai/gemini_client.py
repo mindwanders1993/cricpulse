@@ -9,41 +9,41 @@ logger = setup_logging()
 
 
 class GeminiClient:
-    """Client for Google Gemini 2.0 Flash / Pro API with test mode fallback."""
+    """Client for Gemini 2.5 Flash via OpenRouter, with test mode fallback."""
 
-    def __init__(self, settings: Settings | None = None, model: str = "gemini-2.0-flash"):
+    def __init__(self, settings: Settings | None = None, model: str = "google/gemini-2.5-flash"):
         self.settings = settings or get_settings()
         self.api_key = self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = model
-        self.base_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        )
+        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
 
     def generate_text(self, system_instruction: str, prompt: str) -> str:
-        """Call Gemini 2.0 Flash generateContent API or use mock response if no API key."""
+        """Call Gemini 2.5 Flash via OpenRouter's chat completions API, or use mock response if no API key."""
         if not self.api_key or self.settings.app_env == "test":
             logger.info("gemini_mock_mode_active", reason="No API key or test env")
             return self._mock_generate(prompt)
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
         payload = {
-            "system_instruction": {"parts": [{"text": system_instruction}]},
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.1,
-                "maxOutputTokens": 2048,
-            },
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 2048,
         }
 
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                f"{self.base_url}?key={self.api_key}", json=payload, headers=headers
-            )
+            response = client.post(self.base_url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
-            candidates = data.get("candidates", [])
-            if candidates:
-                return candidates[0]["content"]["parts"][0]["text"]
+            choices = data.get("choices", [])
+            if choices:
+                return choices[0]["message"]["content"]
             return ""
 
     def _mock_generate(self, prompt: str) -> str:
