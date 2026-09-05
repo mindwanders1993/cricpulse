@@ -41,7 +41,8 @@ You must guide the user through the following chained phases for any feature or 
 | `build` | Implementing an approved plan (includes linting + test loops) |
 | `commit` | After build is approved — stages, drafts, and commits |
 | `pr` | Pushes branch and opens PR via GitHub CLI |
-| `test` | Running / debugging backend pytest suite |
+| `test` | Running / debugging backend pytest suite (36+ tests) |
+| `uat` | Running the automated end-to-end UAT suite (`scripts/run_uat.py`) |
 | `dev_env` | Local development server, Docker, `.env` configuration |
 
 ## ⚠️ Token & Context Monitoring

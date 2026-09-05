@@ -1,171 +1,115 @@
 ---
 name: dev_env
-description: Standard operating procedures for running, debugging, and configuring the KaizenCodes local and Docker development environment. Covers port management, CORS, .env validation, Docker, and database modes.
+description: Standard operating procedures for running, debugging, and configuring the CricPulse local development server, Ingestion CLI, Docker container, and Cloud Run deployment.
 ---
 
-# KaizenCodes Dev Environment Skill (`dev_env`)
+# CricPulse Dev Environment Skill (`dev_env`)
 
 ## 🎯 Purpose
-Use this skill to start the application, resolve environment configuration issues, debug CORS errors, switch database modes, or investigate Docker container problems.
+Use this skill to launch the local FastAPI microservice, run DE ingestion pipelines, configure environment variables, manage Docker containers, or diagnose deployment configurations.
+
+All commands run from the **project root**: `/Users/mrrobot/Desktop/Projects/cricpulse`.
 
 ---
 
 ## 🚀 Starting the Application
 
-### Option A: Local Development (Recommended for coding)
-Open two terminal tabs from the project root:
-
-**Terminal 1 — Backend:**
+### Option A: Local API Server (Recommended for development)
 ```bash
-cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
-```
-API docs available at: `http://localhost:8000/docs`
+# Using helper script:
+bash scripts/run_local.sh
 
-**Terminal 2 — Frontend:**
+# Or directly with Uvicorn:
+source .venv/bin/activate && uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+```
+- **Interactive Swagger Docs**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+- **Health Probe**: `http://localhost:8000/health`
+- **Readiness Probe**: `http://localhost:8000/ready`
+
+### Option B: Headless Ingestion CLI
 ```bash
-cd frontend && npm run dev
-```
-App available at: `http://localhost:3001` (or `3000` if port `3001` is in use)
+# Ingest full Cricsheet dataset & player registers:
+source .venv/bin/activate && python -m src.cli ingest-all
 
-### Option B: Docker Compose (Recommended for integration testing)
+# Ingest only match data:
+source .venv/bin/activate && python -m src.cli ingest-matches
+
+# Ingest only player registers:
+source .venv/bin/activate && python -m src.cli ingest-registers
+
+# Build Kimball Star Schema & Analytical Marts:
+source .venv/bin/activate && python -m src.cli build-schema
+```
+
+### Option C: Docker Container (Emulate Cloud Run)
 ```bash
-# Start all services
-docker-compose up -d --build
+# Build image
+docker build -t cricpulse-api .
 
-# View logs
-docker-compose logs -f backend
-docker-compose logs -f frontend
+# Run container (port 8080 matches Cloud Run standard)
+docker run -p 8080:8080 -e APP_ENV=development cricpulse-api
 
-# Stop all services
-docker-compose down
+# Check container health
+curl http://localhost:8080/health
 ```
-
-### Option C: Docker with DynamoDB Local
-```bash
-docker-compose --profile dynamo up -d --build
-```
-DynamoDB local UI available at: `http://localhost:8001`
 
 ---
 
 ## 🔌 Port Reference
 
-| Service | Local Port | Docker Port |
+| Service | Port | Description |
 |:---|:---|:---|
-| Backend (FastAPI) | `8000` | `8000` |
-| Frontend (Next.js) | `3001` | `3001` |
-| DynamoDB Local | `8001` | `8001` |
+| Local Uvicorn | `8000` | Local FastAPI development server with hot-reload |
+| Docker / Cloud Run | `8080` | Containerized HTTP entrypoint |
 
 ### Port Collision Fix:
-If port `8000` or `3001` is already in use:
+If port `8000` is already in use:
 ```bash
-# Find the process using the port
 lsof -i :8000
-# Kill it
 kill -9 <PID>
 ```
 
 ---
 
-## 🌐 CORS Configuration
+## 🔑 Environment Variables Configuration
 
-CORS is configured in `backend/app/main.py` via regex and an explicit allowlist.
+CricPulse uses Pydantic `BaseSettings` defined in `src/config.py`. Settings can be specified via `.env` or system environment variables:
 
-**Current allowed origins:**
-```python
-allow_origin_regex = r"^https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?$"
-```
-This means **any** `localhost` port is allowed automatically. If a new port is needed beyond localhost (e.g., a staging URL), add it to `allow_origins` list in `main.py`.
-
-**Debugging CORS:**
-1. Check the browser Network tab → look for a failing preflight `OPTIONS` request.
-2. Verify the `Origin` header matches the regex above.
-3. Confirm `allow_credentials=True` is set (required for JWT cookies).
-
----
-
-## 🔑 Environment Variables (`.env`)
-
-### `.env` file validation checklist:
-```bash
-# Check what .env values are active
-cat backend/.env
-cat .env  # root-level env used by docker-compose
-```
-
-| Variable | Required | Purpose |
-|:---|:---|:---|
-| `OPENROUTER_API_KEY` | ✅ For AI Sensei hints | OpenRouter API key for `google/gemini-2.5-flash` |
-| `QUESTIONS_DIR` | ✅ | Path to questions folder (`./questions`) |
-| `DATABASE_PATH` | ✅ | SQLite DB path (`./kaizencodes.db`) |
-| `APP_ENV` | ✅ | `development` or `production` |
-| `JWT_SECRET` | ✅ | Secret key for JWT signing — **change in production** |
-| `USE_DYNAMODB` | Optional | `false` (SQLite mode) or `true` (AWS DynamoDB mode) |
-| `DYNAMODB_ENDPOINT_URL` | Optional | `http://localhost:8001` for local DynamoDB |
-| `AWS_REGION` | Optional | `us-east-1` |
-| `COGNITO_USER_POOL_ID` | Optional | For AWS Cognito auth |
-| `COGNITO_CLIENT_ID` | Optional | For AWS Cognito auth |
+| Variable | Default | Required | Purpose |
+|:---|:---|:---|:---|
+| `APP_ENV` | `development` | Optional | `development`, `test`, or `production` |
+| `GEMINI_API_KEY` | None | For live LLM | Google Gemini API key. Mock mode activates automatically if unset. |
+| `SYNC_SECRET_TOKEN` | None | For sync webhook | Secret token verified in `X-Sync-Token` header for `/api/v1/internal/sync-daily` |
+| `DATA_DIR` | `data/` | Optional | Root path for local data storage and raw extracts |
+| `PUBLISHED_DIR` | `data/published/` | Optional | Directory holding immutable `cricket_latest.duckdb` snapshot |
+| `PARQUET_DIR` | `data/parquet/` | Optional | Partitioned Gold Parquet exports directory |
+| `LOG_LEVEL` | `INFO` | Optional | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
 ---
 
-## 🗄️ Database Modes
+## ☁️ Google Cloud Run Deployment
 
-### Mode 1: SQLite (Default — local dev)
+Deploy container to Cloud Run using the deployment script:
 ```bash
-# .env setting:
-USE_DYNAMODB=false
-DATABASE_PATH=./kaizencodes.db
-```
-The SQLite file `kaizencodes.db` is auto-created by `init_db()` on startup.
+# Ensure gcloud CLI is authenticated
+gcloud auth login
+gcloud auth configure-docker us-central1-docker.pkg.dev
 
-### Mode 2: DynamoDB Local (for auth testing)
-```bash
-# .env setting:
-USE_DYNAMODB=true
-DYNAMODB_ENDPOINT_URL=http://localhost:8001
-```
-Start DynamoDB Local first: `docker-compose --profile dynamo up -d dynamodb-local`
-The table `KaizenCodes_Data` is auto-created by `init_dynamodb_table()` on startup.
-
----
-
-## 🐳 Docker Troubleshooting
-
-### Rebuild after code changes:
-```bash
-docker-compose up -d --build
-```
-
-### View live container logs:
-```bash
-docker-compose logs -f backend
-docker-compose logs -f frontend
-```
-
-### Exec into a running container:
-```bash
-docker exec -it kaizencodes-backend /bin/bash
-docker exec -it kaizencodes-frontend /bin/sh
-```
-
-### Full reset (clears containers and volumes):
-```bash
-docker-compose down -v
-docker-compose up -d --build
+# Deploy with custom or default project settings:
+GCP_PROJECT_ID="kaizencodes-prod" GCP_REGION="us-central1" bash scripts/deploy.sh
 ```
 
 ---
 
-## ✅ Quick Health Check
-After starting the app, verify everything is running correctly:
+## ✅ Quick Health Verification
 ```bash
-# Backend health
-curl http://localhost:8000/health
-# Expected: {"status": "ok"}
+# 1. Health Probe
+curl -s http://localhost:8000/health | python3 -m json.tool
 
-# Questions endpoint
-curl http://localhost:8000/api/v1/questions | python3 -m json.tool | head -20
+# 2. Readiness Probe (verifies 13 DuckDB tables)
+curl -s http://localhost:8000/ready | python3 -m json.tool
 
-# Frontend (just check it loads)
-open http://localhost:3001
+# 3. Batting Career Leaderboard
+curl -s "http://localhost:8000/api/v1/analytics/leaderboards/batting?match_type=T20&limit=3" | python3 -m json.tool
 ```
