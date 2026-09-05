@@ -13,9 +13,9 @@ When activated, execute these steps:
 
 2. **Draft PR Body**: Generate a PR body in a scratch file (`/tmp/pr_body.md`) containing:
    - Target branch (`feature → dev` or `dev → main`).
-   - Summary of changes.
-   - Verification Evidence (e.g., "Pytest passed", "Playwright E2E passed").
-   - Karpathy Checklist ("Surgical changes only").
+   - Summary of changes across affected subsystems.
+   - Verification Evidence (e.g., "36 pytest passed", "Automated UAT suite passed 8/8 scenarios").
+   - Karpathy Checklist ("Surgical changes only, simplicity first").
 3. **Pause and Prompt**:
    Output the proposed PR Target, Title, and Body to the user and WAIT:
    > "Ready to publish. Options:
@@ -23,6 +23,7 @@ When activated, execute these steps:
    > [2] Edit PR Body"
 4. **Execute**: If approved, run:
    - `git push -u origin HEAD`
+   - `gh pr create --base dev --title "<type>(<scope>): <title>" --body-file /tmp/pr_body.md`
 5. **Finalize**: Ask the user if they want to merge the feature PR into `dev` or review on GitHub.
 6. **Release Flow (`dev → main`) — 🚫 HARD RULE**:
    - When shipping a release milestone, run the full verification loop on `dev`.

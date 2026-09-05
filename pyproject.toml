@@ -11,12 +11,15 @@ dependencies = [
     "duckdb>=1.1.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
+    "pyyaml>=6.0.0",
     "httpx>=0.28.0",
     "orjson>=3.10.0",
     "structlog>=24.4.0",
     "sqlglot>=26.0.0",
     "typer>=0.15.0",
     "rich>=13.9.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
 ]
 
 [project.optional-dependencies]
