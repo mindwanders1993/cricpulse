@@ -143,3 +143,44 @@ dimensions:
       - "ODM"
       - "Test"
       - "MDM"
+
+semantic_tools:
+  player_phase_splits:
+    name: "Player Phase Splits"
+    description: "Evaluates batting and bowling performance partitioned by match phase (powerplay, middle, death)."
+    parameters:
+      player_uid: "Canonical Cricsheet player identifier (e.g. '483b8b64')"
+      format: "Match format ('T20', 'ODI', 'Test', etc.)"
+      phase: "Optional match phase filter ('powerplay', 'middle', 'death', or null for all)"
+    canonical_rules:
+      - "Batting balls faced strictly excludes wides."
+      - "Batting average divides total runs by dismissals."
+      - "Bowling balls counted strictly as legal deliveries (excludes wides and no-balls)."
+      - "Bowling economy strictly excludes byes and leg-byes."
+      - "Bowling average divides runs conceded by bowler-credited wickets."
+
+  head_to_head_matchup:
+    name: "Head-to-Head Batter vs Bowler Matchup"
+    description: "Evaluates batter vs bowler head-to-head metrics with canonical legal-ball and dismissal tracking."
+    parameters:
+      batter_uid: "Canonical Cricsheet identifier for batter"
+      bowler_uid: "Canonical Cricsheet identifier for bowler"
+      format: "Match format ('T20', 'ODI', 'Test', or 'all')"
+    canonical_rules:
+      - "Balls faced strictly counts legal balls faced by batter against bowler (excludes wides)."
+      - "Runs scored counts runs scored off batter's bat."
+      - "Dismissals counts only dismissals where bowler dismissed this batter."
+      - "Strike rate is (runs_scored / balls_faced) * 100."
+      - "Batting average is runs_scored / NULLIF(dismissals, 0)."
+
+  venue_phase_and_toss_profile:
+    name: "Venue Phase and Toss Profile"
+    description: "Historical match outcomes, toss decisions, innings scores, and phase-by-phase scoring rates for a stadium."
+    parameters:
+      venue_id: "MD5 hash identifier or exact venue name"
+      format: "Match format ('T20', 'ODI', 'Test', etc.)"
+    canonical_rules:
+      - "Toss decision aggregates bat vs field choices."
+      - "Match outcomes calculate bat 1st vs chase win percentages."
+      - "Average 1st and 2nd innings totals."
+      - "Phase run rate is runs conceded per 6 legal balls in that phase."
