@@ -1,6 +1,10 @@
+import os
 from pathlib import Path
 
 import pytest
+
+# Ensure testing environment variable is set so LLM clients run in deterministic mock mode
+os.environ["APP_ENV"] = "test"
 
 from src.config import Settings
 from src.ledger import IdempotencyLedger
