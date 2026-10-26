@@ -19,7 +19,7 @@ def test_duckdb_loader_and_marts(temp_dir: Path):
     loader.load_registers(reg_dfs)
 
     # Verify dim_player
-    player_cnt = loader.con.execute("SELECT COUNT(*) FROM gold.dim_player;").fetchone()[0]
+    player_cnt = loader.con.execute("SELECT COUNT(*) FROM gold.dim_player;").fetchall()[0][0]
     assert player_cnt == 6
 
     # 2. Load matches
@@ -33,10 +33,10 @@ def test_duckdb_loader_and_marts(temp_dir: Path):
     loader.load_matches(match_dfs)
 
     # Verify dim_match and fact_delivery
-    match_cnt = loader.con.execute("SELECT COUNT(*) FROM gold.dim_match;").fetchone()[0]
+    match_cnt = loader.con.execute("SELECT COUNT(*) FROM gold.dim_match;").fetchall()[0][0]
     assert match_cnt == 2
 
-    deliv_cnt = loader.con.execute("SELECT COUNT(*) FROM gold.fact_delivery;").fetchone()[0]
+    deliv_cnt = loader.con.execute("SELECT COUNT(*) FROM gold.fact_delivery;").fetchall()[0][0]
     assert deliv_cnt > 200
 
     # 3. Build Marts
@@ -44,18 +44,18 @@ def test_duckdb_loader_and_marts(temp_dir: Path):
 
     batting_cnt = loader.con.execute(
         "SELECT COUNT(*) FROM gold.mart_player_batting_career;"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     assert batting_cnt > 0
 
     bowling_cnt = loader.con.execute(
         "SELECT COUNT(*) FROM gold.mart_player_bowling_career;"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     assert bowling_cnt > 0
 
     # Test bowling economy exclusion of byes/leg-byes
     econ_check = loader.con.execute(
         "SELECT MIN(economy_rate), MAX(economy_rate) FROM gold.mart_player_bowling_career;"
-    ).fetchone()
+    ).fetchall()[0]
     assert econ_check[0] is not None and econ_check[0] >= 0
 
     # 4. Run Quality Gates
