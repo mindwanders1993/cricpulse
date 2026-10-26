@@ -224,7 +224,7 @@ def test_narrative_storyteller_agent(populated_db_path: Path):
     agent = NarrativeStorytellerAgent(con=con)
 
     # Get sample match
-    match_row = con.execute("SELECT match_id FROM gold.dim_match LIMIT 1;").fetchone()
+    match_row = con.execute("SELECT match_id FROM gold.dim_match LIMIT 1;").fetchall()[0]
     assert match_row is not None
     match_id = str(match_row[0])
 
@@ -266,7 +266,7 @@ def test_supervisor_agent(populated_db_path: Path):
 
 def test_api_ai_story_endpoint(api_client: TestClient, populated_db_path: Path):
     con = duckdb.connect(str(populated_db_path), read_only=True)
-    match_row = con.execute("SELECT match_id FROM gold.dim_match LIMIT 1;").fetchone()
+    match_row = con.execute("SELECT match_id FROM gold.dim_match LIMIT 1;").fetchall()[0]
     con.close()
 
     assert match_row is not None

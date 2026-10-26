@@ -41,7 +41,7 @@ def test_snapshot_publisher(temp_dir: Path, mock_settings: Settings):
 
     # Verify DuckDB can query the published snapshot
     con = duckdb.connect(str(latest_path), read_only=True)
-    row = con.execute("SELECT COUNT(*) FROM gold.dim_match;").fetchone()
+    row = con.execute("SELECT COUNT(*) FROM gold.dim_match;").fetchall()[0]
     assert row[0] == 2
     con.close()
 
