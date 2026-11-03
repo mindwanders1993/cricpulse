@@ -200,8 +200,8 @@ prune: keep the newest 7 snapshots (never the one LATEST names)
 `data_cutoff` = latest `match_date` in `dim_match`.
 
 ### 5.8 API side
-- New `src/snapshot.py`: `resolve_snapshot_path(settings) -> Path`.
-  Order: `SNAPSHOT_PATH` env if set → else `DATA_ROOT/LATEST.json`'s `path`.
+- `src/snapshot.py` (created in M0b.2 with `LatestInfo`, `read_latest`, `write_latest`) gains `resolve_snapshot_path(settings) -> Path`.
+  Order: `SNAPSHOT_PATH` env if set → else the `path` in `DATA_ROOT/snapshots/LATEST.json` (§5.2, §5.7).
 - `src/api/app.py` lifespan calls it. (Refusing to start when it is missing is **M0a**; until then the
   current fallback stays.)
 - **Removed:** `src/api/routes/internal.py`, `src/api/auth.py`, `SyncDailyResponse`, the
@@ -238,7 +238,8 @@ prune: keep the newest 7 snapshots (never the one LATEST names)
 | `docs/features/M0B-SPIKE-RESULTS.md` | NEW: measurements | M0b.1 |
 | `src/config.py` | settings per §5.9 | M0b.2 |
 | `src/publisher/manifest.py` | NEW | M0b.2 |
-| `src/ledger.py`, `tests/test_ledger.py`, `tests/conftest.py` (ledger fixture) | DELETED | M0b.2 |
+| `src/snapshot.py` | NEW: `LatestInfo`, `read_latest`, `write_latest` | M0b.2 |
+| `src/ledger.py`, `tests/test_ledger.py`, `tests/conftest.py` (ledger fixture) | DELETED | M0b.8 *(ruled 3 Nov 2026: instead of M0b.2, because its callers in the downloaders, `main.py` and `internal.py` only go away in M0b.3, M0b.8 and M0b.9)* |
 | `src/downloaders/*.py` | drop ledger args; write to `bronze/<date>/` | M0b.3 |
 | `src/publisher/archive.py` | NEW: stream zip members, diff, parse, quarantine, staging | M0b.3 |
 | `src/parsers/match_parser.py` | `PARSER_VERSION = 1`; match id = file stem (D-9) | M0b.3 |
@@ -249,7 +250,7 @@ prune: keep the newest 7 snapshots (never the one LATEST names)
 | `src/publisher/publisher.py` | versioned publish, `LATEST.json`, prune; remove `export_gold_parquets` | M0b.7 |
 | `src/publisher/main.py` | new `run`; `ingest_local` reuses the same path | M0b.8 |
 | `tests/test_pipeline.py` | NEW: multi-run integration | M0b.8 |
-| `src/snapshot.py`, `src/api/app.py`, `src/api/routes/internal.py`, `src/api/auth.py`, `src/api/schemas.py` | §5.8 | M0b.9 |
+| `src/snapshot.py` (`resolve_snapshot_path`), `src/api/app.py`, `src/api/routes/internal.py`, `src/api/auth.py`, `src/api/schemas.py` | §5.8 | M0b.9 |
 | `Dockerfile`, `.github/workflows/deploy.yml`, `scripts/infra_m0b.sh` | job + schedule + mount | M0b.10 |
 | `src/publisher/rollout.py` | NEW: bump the API's `SNAPSHOT_VERSION` via the Cloud Run Admin API (REST) | M0b.10 |
 | `scripts/run_uat.py`, `docs/uat/M0B-UAT.md` | UAT | M0b.11 |
@@ -296,7 +297,7 @@ refusal and cursors). Whichever lands second rebases.
 | Task | Title | Lane |
 |---|---|---|
 | M0b.1 | Spike: measure the full build and query speed — **Done**, `M0B-SPIKE-RESULTS.md` | A |
-| M0b.2 | Settings + manifest; delete the ledger | A |
+| M0b.2 | Settings, manifest and the `LATEST.json` model | A |
 | M0b.3 | Archive reader: stream, diff, parse, quarantine | A |
 | M0b.4 | Silver merge | A |
 | M0b.5 | Gold from Silver | A |
