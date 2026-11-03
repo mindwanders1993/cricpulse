@@ -92,17 +92,6 @@ class HealthResponse(BaseModel):
     tables_count: int = 0
 
 
-class SyncDailyResponse(BaseModel):
-    """Response for internal scheduled synchronization webhook."""
-
-    status: str = "success"
-    message: str = "Daily sync completed successfully"
-    matches_downloaded: int = 0
-    matches_ingested: int = 0
-    snapshot_published: str | None = None
-    duration_seconds: float = 0.0
-
-
 class AIStoryRequest(BaseModel):
     """Request to generate narrative match recap and turning points."""
 

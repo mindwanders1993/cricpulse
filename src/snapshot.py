@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from src.config import Settings
+
 LATEST_NAME = "LATEST.json"
 
 
@@ -38,3 +40,14 @@ def write_latest(data_dir: Path, info: LatestInfo) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(info.model_dump_json(indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def resolve_snapshot_path(settings: Settings) -> Path | None:
+    """The snapshot the API serves: SNAPSHOT_PATH, else the one LATEST.json names, else None."""
+    # M0b dossier §5.8: the override wins; "" means unset (M0b.2 keeps it a str, not Path("."))
+    if settings.snapshot_path:
+        return Path(settings.snapshot_path)
+    info = read_latest(settings.data_dir)
+    if info is None:
+        return None
+    return settings.data_dir / info.path
