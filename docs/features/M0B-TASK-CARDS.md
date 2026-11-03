@@ -8,10 +8,10 @@ disagree, the dossier wins and the card is corrected before the task is handed o
 
 ## 0. Before Task 1
 
-- [ ] **Your uncommitted AI/UI work on `dev`** (`src/ai/*`, `src/api/*`, `index.html`, `clarifier.py`,
+- [x] **Your uncommitted AI/UI work on `dev`** (`src/ai/*`, `src/api/*`, `index.html`, `clarifier.py`,
       tests) needs a home first — commit it on its own branch, or stash it. M0b must start from a clean `dev`.
-- [ ] Cut the module branch: `git checkout dev && git checkout -b feat/M0b-trustworthy-data-pipeline`.
-- [ ] Dossier decisions D-1 … D-8 ruled by the owner.
+- [x] Cut the module branch: `git checkout dev && git checkout -b feat/M0b-trustworthy-data-pipeline`.
+- [x] Dossier decisions D-1 … D-8 ruled by the owner. *(D-1…D-8 on 26 Oct; D-10 on 3 Nov 2026.)*
 
 ---
 
