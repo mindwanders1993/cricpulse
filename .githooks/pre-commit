@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fast gate before every commit: ruff on the staged Python files.
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+[ -z "$staged" ] && exit 0
+if [ -x .venv/bin/ruff ]; then RUFF=.venv/bin/ruff; elif command -v ruff >/dev/null 2>&1; then RUFF=ruff; else exit 0; fi
+# shellcheck disable=SC2086
+$RUFF check $staged || { echo "CricPulse: ruff failed; fix before committing."; exit 1; }
