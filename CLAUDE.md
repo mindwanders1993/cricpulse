@@ -1,4 +1,4 @@
-For this repo's concrete workflow (skills, branching model, subsystem guardrails), see `.agents/AGENTS.md`. The guidelines below are general behavioral defaults — merge with those project-specific instructions rather than override them.
+For this repo's concrete workflow (skills, branching model, subsystem guardrails), see the root `AGENTS.md`. The guidelines below are general behavioral defaults — merge with those project-specific instructions rather than override them.
 
 # CLAUDE.md
 
