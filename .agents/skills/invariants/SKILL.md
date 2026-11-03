@@ -8,7 +8,8 @@ user-invocable: false
 
 ## 1. Live data never shrinks
 - No code path writes `LATEST.json` until every quality gate (`run_quality_gates`) has passed on the new snapshot.
-- Gate: the new snapshot's `dim_match` and `fact_delivery` counts are ≥ the live snapshot's; quarantine count is
+- Gate: the new snapshot's `dim_match` count is ≥ the live snapshot's, and `fact_delivery` is ≥ 0.999 × the live
+  count (M0b dossier §5.6: a revised match may carry fewer balls); quarantine count is
   ≤ `max(5, 1%)` of the run's files (M0b D-5).
 - Published files are written as `<name>.tmp` then renamed. Nothing is overwritten in place. Nothing is deleted
   before its replacement is live (M0b D-7 prunes afterwards).
