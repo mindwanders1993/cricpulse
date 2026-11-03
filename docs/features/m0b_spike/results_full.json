@@ -1,0 +1,113 @@
+{
+  "files": 22818,
+  "parse_first_1000": {
+    "seconds": 1.8,
+    "peak_rss_mb": 474.6,
+    "deliveries": 643494
+  },
+  "parse_all_to_parts": {
+    "seconds": 38.5,
+    "peak_rss_mb": 661.9,
+    "failed": 0,
+    "failed_examples": []
+  },
+  "silver_compact": {
+    "seconds": 1.4,
+    "peak_rss_mb": 3098.5,
+    "sizes": {
+      "matches": {
+        "mb": 0.4,
+        "rows": 22818
+      },
+      "innings": {
+        "mb": 0.2,
+        "rows": 50501
+      },
+      "deliveries": {
+        "mb": 61.5,
+        "rows": 11539809
+      },
+      "wickets": {
+        "mb": 5.0,
+        "rows": 352343
+      },
+      "match_players": {
+        "mb": 2.0,
+        "rows": 503375
+      }
+    },
+    "total_mb": 69.1
+  },
+  "gold_dim_match": {
+    "seconds": 0.3,
+    "peak_rss_mb": 3098.5
+  },
+  "gold_fact_delivery": {
+    "seconds": 15.6,
+    "peak_rss_mb": 5452.6
+  },
+  "gold_fact_innings": {
+    "seconds": 0.0,
+    "peak_rss_mb": 5452.6
+  },
+  "gold_fact_wicket_detail": {
+    "seconds": 0.2,
+    "peak_rss_mb": 5452.6
+  },
+  "gold_fact_player_match": {
+    "seconds": 0.7,
+    "peak_rss_mb": 5452.6
+  },
+  "gold_marts": {
+    "seconds": 1.2,
+    "peak_rss_mb": 5452.6
+  },
+  "quality_gates": {
+    "seconds": 0.1,
+    "peak_rss_mb": 5452.6,
+    "error": null
+  },
+  "gold_build_total": {
+    "seconds": 18.3,
+    "peak_rss_mb": 5452.6
+  },
+  "snapshot": {
+    "mb": 1089.5,
+    "counts": {
+      "dim_match": 22817,
+      "fact_delivery": 11539581,
+      "fact_innings": 50499,
+      "dim_player": 18507,
+      "dim_venue": 896
+    },
+    "data_cutoff": "2026-09-02"
+  },
+  "queries": {
+    "batting_career": {
+      "cold_ms": 1.3,
+      "p50_ms": 1.2,
+      "p95_ms": 1.8
+    },
+    "matchup_h2h": {
+      "cold_ms": 87.8,
+      "p50_ms": 76.0,
+      "p95_ms": 96.7
+    },
+    "phase_splits": {
+      "cold_ms": 95.7,
+      "p50_ms": 100.1,
+      "p95_ms": 118.6
+    },
+    "leaderboard": {
+      "cold_ms": 3.5,
+      "p50_ms": 3.2,
+      "p95_ms": 4.3
+    },
+    "venue_profile": {
+      "cold_ms": 28.8,
+      "p50_ms": 26.6,
+      "p95_ms": 37.8
+    }
+  },
+  "peak_rss_mb_total": 5452.6
+}
