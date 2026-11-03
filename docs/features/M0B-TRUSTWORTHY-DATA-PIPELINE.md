@@ -74,7 +74,7 @@ API endpoint /internal/sync-daily                  Cloud Run Job (separate proce
 | D-5 | A match file fails to parse | **Quarantine it and continue.** The run fails only if more than `max(5, 1%)` of its files fail. | Fail the whole run (today) | Approved as recommended, 26 Oct |
 | D-6 | `export_gold_parquets` | **Remove it.** Silver is now the Parquet layer. | Keep behind a flag | Approved as recommended, 26 Oct |
 | D-7 | Retention | **Keep 7 snapshots and 30 days of raw zips;** the job prunes older ones. | GCS lifecycle rules | Approved as recommended, 26 Oct |
-| D-9 | Match id (spike §3: two files collide today) | **File stem, `wi_` prefix kept**; Silver → Gold uses plain `INSERT` so a duplicate fails loudly | Strip the prefix (today — loses a match) | Proposed — from the spike |
+| D-9 | Match id (spike §3: two files collide today) | **File stem, `wi_` prefix kept**; Silver → Gold uses plain `INSERT` so a duplicate fails loudly | Strip the prefix (today — loses a match) | Approved as recommended, 3 Nov 2026 — instead of stripping the prefix, because that silently loses a match |
 | D-10 | Primary keys on Gold fact tables (spike §2.3) | **Drop them**; uniqueness stays a quality gate; dimension keys stay. Snapshot 1.1 GB → 0.4 GB, memory 5.5 → 2 GB, same query speed | Keep them | Approved as recommended, 3 Nov 2026 — instead of keeping them, because the snapshot is a third the size at the same query speed |
 | D-8 | Snapshot version name | **`v20261026T0230Z`** (UTC, sortable, one per run) | Date only (collides on re-runs) | Approved as recommended, 26 Oct |
 
