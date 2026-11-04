@@ -210,7 +210,7 @@ sync test only), `tests/test_snapshot.py`.
    `LATEST` target is never pruned; an error before `write_latest` leaves the old `LATEST.json`
    byte-identical.
 **Verify:** `python -m pytest tests/test_publisher.py -q` → pass; full suite → pass.
-**Depends:** M0b.6
+**Depends:** M0b.6; M0b.3 — `publish()` imports `PARSER_VERSION` from `src.parsers.match_parser`, so the module branch is merged into lane B first *(ruled 4 Nov 2026: instead of a local constant or a `parser_version` argument, because either is a second source of truth that drifts when M1 bumps the parser)*
 
 ---
 
@@ -227,6 +227,9 @@ sync test only), `tests/test_snapshot.py`.
 2. `ingest-local --matches-dir` reuses the same steps with a directory source instead of a zip.
 3. Delete the ledger and every now-unused setting, argument and method (`grep` proves none remain).
 4. `tests/test_pipeline.py`: dossier §8 scenarios 1–6.
+5. Risk R-6 (dossier §7): `build_from_silver` now uses plain `INSERT` for `dim_venue`; if real data holds one venue name
+   with two cities, the first full build fails. Add a test that two matches naming one venue with different cities build
+   without a duplicate-id error, or stop with a BLOCKED note that quotes the failing rows for a ruling.
 **Verify:** `python -m pytest tests/test_pipeline.py -q` → pass; full suite → pass;
 `grep -rn "ledger\|IdempotencyLedger\|export_gold_parquets" src tests` → nothing;
 `python -m src.publisher.main run --help` shows the new options.
