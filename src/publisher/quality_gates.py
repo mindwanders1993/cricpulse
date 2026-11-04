@@ -1,7 +1,9 @@
+import math
 from typing import Any
 
 import duckdb
 
+from src.snapshot import LatestInfo
 from src.utils import setup_logging
 
 logger = setup_logging()
@@ -11,8 +13,16 @@ class QualityGateFailure(Exception):
     """Raised when one or more data quality checks fail."""
 
 
-def run_quality_gates(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    """Execute automated Data Quality assertions against the DuckDB Star Schema."""
+def run_quality_gates(
+    con: duckdb.DuckDBPyConnection,
+    previous: LatestInfo | None = None,
+    quarantined: int = 0,
+    files_seen: int = 0,
+) -> list[dict[str, Any]]:
+    """Execute automated Data Quality assertions against the DuckDB Star Schema.
+
+    `previous` is the live `LATEST.json`; `quarantined` and `files_seen` come from the run state.
+    """
     checks = [
         (
             "dim_player_uniqueness",
@@ -82,6 +92,55 @@ def run_quality_gates(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
         ),
     ]
 
+    # M0b dossier D-10: fact tables lose their primary keys, so their grain is a gate instead
+    checks += [
+        (
+            "innings_grain_uniqueness",
+            """
+            SELECT COUNT(*) FROM (
+                SELECT match_id, innings_number
+                FROM gold.fact_innings
+                GROUP BY 1, 2
+                HAVING COUNT(*) > 1
+            );
+            """,
+            lambda res: res == 0,
+            "Duplicate (match_id, innings_number) detected in fact_innings",
+        ),
+        (
+            "player_match_grain_uniqueness",
+            """
+            SELECT COUNT(*) FROM (
+                SELECT match_id, player_id
+                FROM gold.fact_player_match
+                GROUP BY 1, 2
+                HAVING COUNT(*) > 1
+            );
+            """,
+            lambda res: res == 0,
+            "Duplicate (match_id, player_id) detected in fact_player_match",
+        ),
+    ]
+
+    # M0b dossier §5.6 / invariant 1: live data never shrinks; skipped on the first run
+    if previous is not None:
+        min_deliveries = 0.999 * previous.delivery_count  # §5.6 tolerance for revised matches
+        checks += [
+            (
+                "never_shrinks_matches",
+                "SELECT COUNT(*) FROM gold.dim_match;",
+                lambda res: res >= previous.match_count,
+                f"Fewer matches than live snapshot {previous.version} ({previous.match_count})",
+            ),
+            (
+                "never_shrinks_deliveries",
+                "SELECT COUNT(*) FROM gold.fact_delivery;",
+                lambda res: res >= min_deliveries,
+                f"Deliveries below 0.999 x live snapshot {previous.version} "
+                f"({previous.delivery_count})",
+            ),
+        ]
+
     results: list[dict[str, Any]] = []
     failures: list[str] = []
 
@@ -108,6 +167,19 @@ def run_quality_gates(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
         except Exception as e:
             logger.error("quality_gate_error", check=name, error=str(e))
             failures.append(f"[{name}] SQL execution error: {e}")
+
+    # M0b dossier D-5: a run fails only if more than max(5, 1%) of its files were quarantined
+    quarantine_limit = max(5, math.ceil(0.01 * files_seen))
+    quarantine_ok = quarantined <= quarantine_limit
+    results.append({"check": "quarantine_bounded", "passed": quarantine_ok, "value": quarantined})
+    if not quarantine_ok:
+        msg = f"{quarantined} of {files_seen} files quarantined, limit {quarantine_limit}"
+        logger.error(
+            "quality_gate_failed", check="quarantine_bounded", value=quarantined, message=msg
+        )
+        failures.append(f"[quarantine_bounded] {msg}")
+    else:
+        logger.info("quality_gate_passed", check="quarantine_bounded", value=quarantined)
 
     if failures:
         raise QualityGateFailure(

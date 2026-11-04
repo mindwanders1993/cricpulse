@@ -12,7 +12,6 @@ from src.ai.tactical_scout import TacticalScoutAgent
 from src.ai.text_to_sql import TextToSQLAgent
 from src.api.app import create_app
 from src.builder.loader import DuckDBLoader
-from src.config import get_settings
 from src.parsers.match_parser import MatchParser
 from src.parsers.register_parser import RegisterParser
 
@@ -288,60 +287,3 @@ def test_api_ai_chat_endpoint(api_client: TestClient):
     assert data["status"] == "success"
     assert "reply" in data
     assert "routed_agent" in data
-
-
-def test_api_internal_sync_endpoint(api_client: TestClient, monkeypatch):
-    settings = get_settings()
-
-    # 1. In test environment, sync is allowed without token
-    monkeypatch.setattr(settings, "app_env", "test")
-    # Mock download_registers to avoid external HTTP in unit tests
-    from unittest.mock import patch
-
-    with (
-        patch(
-            "src.downloaders.register_downloader.RegisterDownloader.download_registers"
-        ) as mock_reg,
-        patch(
-            "src.downloaders.match_downloader.MatchDownloader.download_and_extract"
-        ) as mock_match,
-    ):
-        mock_reg.return_value = (
-            Path("tests/fixtures/sample_people.csv"),
-            Path("tests/fixtures/sample_names.csv"),
-        )
-        mock_match.return_value = [Path("tests/fixtures/sample_t20.json")]
-
-        resp = api_client.post("/api/v1/internal/sync-daily")
-        assert resp.status_code == 200
-        sync_data = resp.json()
-        assert sync_data["status"] == "success"
-        assert "matches_downloaded" in sync_data
-
-    # 2. In production environment with token, unauthorized without header
-    monkeypatch.setattr(settings, "app_env", "production")
-    monkeypatch.setattr(settings, "sync_secret_token", "super_secret_token_123")
-
-    resp_unauth = api_client.post("/api/v1/internal/sync-daily")
-    assert resp_unauth.status_code == 401
-
-    # 3. Authorized with correct header
-    with (
-        patch(
-            "src.downloaders.register_downloader.RegisterDownloader.download_registers"
-        ) as mock_reg,
-        patch(
-            "src.downloaders.match_downloader.MatchDownloader.download_and_extract"
-        ) as mock_match,
-    ):
-        mock_reg.return_value = (
-            Path("tests/fixtures/sample_people.csv"),
-            Path("tests/fixtures/sample_names.csv"),
-        )
-        mock_match.return_value = [Path("tests/fixtures/sample_t20.json")]
-
-        resp_auth = api_client.post(
-            "/api/v1/internal/sync-daily",
-            headers={"X-Sync-Token": "super_secret_token_123"},
-        )
-        assert resp_auth.status_code == 200

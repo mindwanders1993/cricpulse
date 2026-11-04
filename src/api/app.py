@@ -7,9 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.ai.gemini_client import GeminiClient
-from src.api.routes import ai_router, analytics_router, health_router, internal_router
+from src.api.routes import ai_router, analytics_router, health_router
 from src.builder.schema import INIT_SCHEMA_SQL
 from src.config import get_settings
+from src.snapshot import resolve_snapshot_path
 from src.utils import setup_logging
 
 logger = setup_logging()
@@ -25,7 +26,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # 1. Initialize DuckDB connection
-        target_db = Path(db_path) if db_path else settings.published_dir / "cricket_latest.duckdb"
+        # M0b dossier §5.8: serve the snapshot LATEST.json names; the old fallback stays until M0a
+        target_db = (
+            Path(db_path)
+            if db_path
+            else resolve_snapshot_path(settings) or settings.published_dir / "cricket_latest.duckdb"
+        )
 
         if target_db.exists():
             logger.info("mounting_published_duckdb_snapshot", path=str(target_db))
@@ -66,7 +72,6 @@ def create_app(
     app.include_router(health_router)
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(ai_router, prefix="/api/v1")
-    app.include_router(internal_router, prefix="/api/v1")
 
     # Chat UI (served same-origin so it can call the API routes above directly)
     static_dir = Path(__file__).parent / "static"
