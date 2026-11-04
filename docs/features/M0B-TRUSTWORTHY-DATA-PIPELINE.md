@@ -76,6 +76,7 @@ API endpoint /internal/sync-daily                  Cloud Run Job (separate proce
 | D-7 | Retention | **Keep 7 snapshots and 30 days of raw zips;** the job prunes older ones. | GCS lifecycle rules | Approved as recommended, 26 Oct |
 | D-9 | Match id (spike §3: two files collide today) | **File stem, `wi_` prefix kept**; Silver → Gold uses plain `INSERT` so a duplicate fails loudly | Strip the prefix (today — loses a match) | Approved as recommended, 3 Nov 2026 — instead of stripping the prefix, because that silently loses a match |
 | D-10 | Primary keys on Gold fact tables (spike §2.3) | **Drop them**; uniqueness stays a quality gate; dimension keys stay. Snapshot 1.1 GB → 0.4 GB, memory 5.5 → 2 GB, same query speed | Keep them | Approved as recommended, 3 Nov 2026 — instead of keeping them, because the snapshot is a third the size at the same query speed |
+| D-11 | A venue name appears with several cities (66 of 896 in real data; R-6) | **One `dim_venue` row per venue name, `venue_id = md5(venue_name)` as today, city = the most frequent non-null city (ties: alphabetical).** Shared-name grounds (`County Ground` ×6, `National Stadium`, `Nehru Stadium`, `Queen's Park`) stay merged until M1 re-keys venues | `md5(venue_name \|\| city)` — splits one ground across spellings and changes every id the resolver reads; or fail the build | Ruled by the governor, 4 Nov 2026 — instead of failing the build or splitting ids, because it keeps today's ids and today's merge, made deterministic; M1 does venues properly |
 | D-8 | Snapshot version name | **`v20261026T0230Z`** (UTC, sortable, one per run) | Date only (collides on re-runs) | Approved as recommended, 26 Oct |
 
 ---
@@ -269,7 +270,7 @@ refusal and cursors). Whichever lands second rebases.
 | R-3 | Cricsheet archive names differ from what we expect | M0b.3 checks each archive URL with a HEAD request in a test against the live site (marked, skipped in CI) |
 | R-4 | A Cricsheet revision removes a whole match | Never-delete rule + Sunday absence log |
 | R-5 | Silver schema drift when M1 adds columns | `UNION ALL BY NAME`; M1 bumps `PARSER_VERSION` to rebuild Silver |
-| R-6 | `dim_venue` derived with plain `INSERT` (D-9/D-10) fails if one venue name appears with two cities in real data | Raised by M0b.5 (4 Nov 2026). M0b.8 tests the case; a real duplicate is a ruling, not a workaround |
+| R-6 | `dim_venue` derived with plain `INSERT` (D-9/D-10) fails if one venue name appears with two cities in real data | Confirmed by M0b.8 (4 Nov 2026): 66 venues. **Ruled D-11**; M0b.8 implements it in `_derive_venue_and_team` with a test |
 | Q-1 | Should a failed nightly run alert someone? | Proposed: Cloud Run job failure → email alert (free). Confirm in M0b.10. |
 
 ---

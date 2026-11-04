@@ -220,18 +220,22 @@ sync test only), `tests/test_snapshot.py`.
 `tests/test_ledger.py` (delete), `tests/conftest.py`, `src/config.py` (remove unused settings),
 `src/downloaders/*.py` (remove `ledger` and the extract-to-disk path), `tests/test_downloaders.py`,
 `src/publisher/publisher.py` (only to remove `publish_snapshot` if unused), `Dockerfile` (default CMD),
-`docker-compose.yml` (ingest service command).
+`docker-compose.yml` (ingest service command), `src/builder/loader.py` (**only** `_derive_venue_and_team`, D-11),
+`tests/test_loader_and_schema.py` (add the D-11 test) *(Owns widened 4 Nov 2026 from M0b.8's first BLOCKED note)*.
 **Subtasks:**
 1. `run(archive=settings.nightly_archive, reparse_all=False)` per dossier §5.1, including the
    "up to date" exit and the run report `runs/<version>.json`.
 2. `ingest-local --matches-dir` reuses the same steps with a directory source instead of a zip.
 3. Delete the ledger and every now-unused setting, argument and method (`grep` proves none remain).
 4. `tests/test_pipeline.py`: dossier §8 scenarios 1–6.
-5. Risk R-6 (dossier §7): `build_from_silver` now uses plain `INSERT` for `dim_venue`; if real data holds one venue name
-   with two cities, the first full build fails. Add a test that two matches naming one venue with different cities build
-   without a duplicate-id error, or stop with a BLOCKED note that quotes the failing rows for a ruling.
+5. D-11 (dossier §4, R-6): `_derive_venue_and_team` emits one `dim_venue` row per venue name — `md5(venue_name)`,
+   the most frequent non-null city, ties alphabetical (`GROUP BY … QUALIFY row_number() OVER (PARTITION BY venue_name
+   ORDER BY city IS NULL, n DESC, city) = 1`). Test: two matches naming one venue with different cities build one row
+   with the majority city; a venue whose only city is NULL keeps NULL.
+6. `files_seen` for `quarantine_bounded` is the number of changed members the run tried to parse (D-5: "its files").
 **Verify:** `python -m pytest tests/test_pipeline.py -q` → pass; full suite → pass;
-`grep -rn "ledger\|IdempotencyLedger\|export_gold_parquets" src tests` → nothing;
+`grep -rn "ledger\|IdempotencyLedger" src tests` → nothing; `grep -rn "export_gold_parquets" src` → nothing
+(the lane B guard test in `tests/test_publisher.py` keeps the string on purpose);
 `python -m src.publisher.main run --help` shows the new options.
 **Depends:** M0b.5, M0b.7, lane B merged
 
