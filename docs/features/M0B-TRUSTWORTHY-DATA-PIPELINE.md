@@ -269,6 +269,7 @@ refusal and cursors). Whichever lands second rebases.
 | R-3 | Cricsheet archive names differ from what we expect | M0b.3 checks each archive URL with a HEAD request in a test against the live site (marked, skipped in CI) |
 | R-4 | A Cricsheet revision removes a whole match | Never-delete rule + Sunday absence log |
 | R-5 | Silver schema drift when M1 adds columns | `UNION ALL BY NAME`; M1 bumps `PARSER_VERSION` to rebuild Silver |
+| R-6 | `dim_venue` derived with plain `INSERT` (D-9/D-10) fails if one venue name appears with two cities in real data | Raised by M0b.5 (4 Nov 2026). M0b.8 tests the case; a real duplicate is a ruling, not a workaround |
 | Q-1 | Should a failed nightly run alert someone? | Proposed: Cloud Run job failure → email alert (free). Confirm in M0b.10. |
 
 ---

@@ -67,10 +67,11 @@ CREATE TABLE IF NOT EXISTS gold.dim_match (
 
 -- ==========================================
 -- FACTS
+-- M0b dossier D-10: no primary keys on fact tables; grain uniqueness is a quality gate
 -- ==========================================
 
 CREATE TABLE IF NOT EXISTS gold.fact_delivery (
-    delivery_id       VARCHAR PRIMARY KEY,
+    delivery_id       VARCHAR NOT NULL,
     match_id          VARCHAR NOT NULL,
     innings_number    INTEGER NOT NULL,
     over_number       INTEGER NOT NULL,
@@ -104,8 +105,7 @@ CREATE TABLE IF NOT EXISTS gold.fact_innings (
     batting_team      VARCHAR NOT NULL,
     total_runs        INTEGER NOT NULL,
     total_wickets     INTEGER NOT NULL,
-    total_deliveries  INTEGER NOT NULL,
-    PRIMARY KEY (match_id, innings_number)
+    total_deliveries  INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS gold.fact_wicket_detail (
@@ -126,8 +126,7 @@ CREATE TABLE IF NOT EXISTS gold.fact_player_match (
     match_id          VARCHAR NOT NULL,
     team_name         VARCHAR NOT NULL,
     player_id         VARCHAR NOT NULL,
-    player_name       VARCHAR NOT NULL,
-    PRIMARY KEY (match_id, player_id)
+    player_name       VARCHAR NOT NULL
 );
 """
 

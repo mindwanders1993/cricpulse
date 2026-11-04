@@ -1,3 +1,4 @@
+import datetime as dt
 from pathlib import Path
 
 import httpx
@@ -46,3 +47,25 @@ class RegisterDownloader:
         people_csv = self.download_file("people.csv")
         names_csv = self.download_file("names.csv")
         return people_csv, names_csv
+
+    def download_registers_to_bronze(self, date: dt.date) -> tuple[Path, Path]:
+        """Download people.csv and names.csv to bronze/registers/<date>/ (M0b dossier §5.2)."""
+        dest_dir = self.settings.bronze_dir / "registers" / date.isoformat()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            for filename in ("people.csv", "names.csv"):
+                url = f"{self.base_url}/register/{filename}"
+                dest_path = dest_dir / filename
+                logger.info("downloading_register_file", url=url, dest=str(dest_path))
+                response = client.get(url)
+                response.raise_for_status()
+                dest_path.write_bytes(response.content)
+                logger.info(
+                    "register_file_downloaded",
+                    filename=filename,
+                    sha256=compute_file_sha256(dest_path),
+                    size_bytes=dest_path.stat().st_size,
+                )
+                paths.append(dest_path)
+        return paths[0], paths[1]

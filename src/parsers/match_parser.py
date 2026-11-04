@@ -9,6 +9,9 @@ from src.utils import setup_logging
 
 logger = setup_logging()
 
+# M0b dossier §5.3: a match parsed with an older version is re-parsed; M1 bumps this
+PARSER_VERSION = 1
+
 
 MATCHES_SCHEMA = {
     "match_id": pl.Utf8,
@@ -101,7 +104,7 @@ class MatchParser:
         json_path = Path(json_path)
         raw_bytes = json_path.read_bytes()
         data = orjson.loads(raw_bytes)
-        match_id = json_path.stem.replace("wi_", "")  # Support Women's International prefix
+        match_id = json_path.stem  # M0b dossier D-9: file stem, wi_ prefix kept
         return self.parse_json(match_id, data)
 
     def parse_json(self, match_id: str, data: dict[str, Any]) -> dict[str, pl.DataFrame]:
