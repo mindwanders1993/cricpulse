@@ -21,6 +21,6 @@ COPY conf/ ./conf/
 # Install python package and dependencies
 RUN pip install --upgrade pip && pip install .
 
-# Default command runs incremental sync
+# Default command runs the nightly job (M0b dossier §5.1; archive from NIGHTLY_ARCHIVE)
 ENTRYPOINT ["python", "-m", "src.publisher.main"]
-CMD ["run", "--mode", "incremental"]
+CMD ["run"]

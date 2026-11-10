@@ -120,15 +120,23 @@ class DuckDBLoader:
         logger.info("silver_loaded_into_duckdb", silver_dir=str(silver_dir))
 
     def _derive_venue_and_team(self) -> None:
+        # M0b dossier D-11: one row per venue name, its most frequent non-null city (ties alphabetical)
         self.con.execute("""
             INSERT INTO gold.dim_venue (venue_id, venue_name, city, country)
-            SELECT DISTINCT 
+            SELECT
                 md5(venue_name) AS venue_id,
                 venue_name,
                 city,
                 NULL AS country
-            FROM gold.dim_match
-            WHERE venue_name IS NOT NULL;
+            FROM (
+                SELECT venue_name, city, count(*) AS n
+                FROM gold.dim_match
+                WHERE venue_name IS NOT NULL
+                GROUP BY venue_name, city
+            )
+            QUALIFY row_number() OVER (
+                PARTITION BY venue_name ORDER BY city IS NULL, n DESC, city
+            ) = 1;
         """)
 
         self.con.execute("""

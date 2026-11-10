@@ -1,7 +1,9 @@
+import copy
 import zipfile
 from pathlib import Path
 
 import duckdb
+import orjson
 import polars as pl
 import pytest
 
@@ -195,3 +197,42 @@ def test_fact_tables_have_no_primary_keys_and_dimensions_keep_theirs(temp_dir: P
     assert not {t for t in keyed if t.startswith("fact_")}
     assert {"dim_match", "dim_player", "dim_venue", "dim_team"} <= keyed
     loader.close()
+
+
+def test_dim_venue_one_row_per_venue_name_with_majority_city(temp_dir: Path):
+    # M0b dossier D-11: venue_id = md5(venue_name); the most frequent non-null city, ties alphabetical
+    base = orjson.loads((FIXTURES / "sample_t20.json").read_bytes())
+    venues = {  # match_id: (venue, city); None = the file names no city
+        "m1": ("Majority Ground", "Zeta"),
+        "m2": ("Majority Ground", "Zeta"),
+        "m3": ("Majority Ground", "Alpha"),
+        "m4": ("Tied Ground", "Beta"),
+        "m5": ("Tied Ground", "Alpha"),
+        "m6": ("Mostly Unnamed City Ground", None),
+        "m7": ("Mostly Unnamed City Ground", None),
+        "m8": ("Mostly Unnamed City Ground", "Gamma"),
+        "m9": ("No City Ground", None),
+    }
+    parsed = []
+    for match_id, (venue, city) in venues.items():
+        data = copy.deepcopy(base)
+        data["info"]["venue"] = venue
+        data["info"].pop("city", None)
+        if city is not None:
+            data["info"]["city"] = city
+        parsed.append(MatchParser().parse_json(match_id, data))
+    match_dfs = {table: pl.concat([dfs[table] for dfs in parsed]) for table in parsed[0]}
+
+    loader = DuckDBLoader(db_path=temp_dir / "snapshot.duckdb")
+    loader.load_matches(match_dfs)  # plain INSERT: two rows for one venue_id would fail here
+    rows = loader.con.execute(
+        "SELECT venue_name, city, venue_id = md5(venue_name) FROM gold.dim_venue ORDER BY venue_name"
+    ).fetchall()
+    loader.close()
+
+    assert rows == [
+        ("Majority Ground", "Zeta", True),
+        ("Mostly Unnamed City Ground", "Gamma", True),
+        ("No City Ground", None, True),
+        ("Tied Ground", "Alpha", True),
+    ]
