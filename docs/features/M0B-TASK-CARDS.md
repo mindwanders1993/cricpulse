@@ -222,17 +222,28 @@ sync test only), `tests/test_snapshot.py`.
 `src/publisher/publisher.py` (only to remove `publish_snapshot` if unused), `Dockerfile` (default CMD),
 `docker-compose.yml` (ingest service command), `src/builder/loader.py` (**only** `_derive_venue_and_team`, D-11),
 `tests/test_loader_and_schema.py` (add the D-11 test) *(Owns widened 4 Nov 2026 from M0b.8's first BLOCKED note)*.
+`tests/test_config.py` (drop the removed settings' assertions; delete `test_settings_snapshot_date_default`) *(Owns widened 10 Nov 2026 from M0b.8's second BLOCKED note)*.
 **Subtasks:**
 1. `run(archive=settings.nightly_archive, reparse_all=False)` per dossier §5.1, including the
    "up to date" exit and the run report `runs/<version>.json`.
 2. `ingest-local --matches-dir` reuses the same steps with a directory source instead of a zip.
-3. Delete the ledger and every now-unused setting, argument and method (`grep` proves none remain).
+3. Delete the ledger and every now-unused setting, argument and method (`grep` proves none remain). The settings that go
+   (governor, 10 Nov 2026, from the second BLOCKED note): `sync_secret_token`, `ledger_db_path`, `parquet_dir`, `raw_match_dir`,
+   `raw_dir`, `raw_register_dir`, `snapshot_date`, `force`, `gcs_bucket`; `published_dir` stays (read by `src/api/app.py`
+   and `scripts/run_uat.py`). Tests deleted with the extract-to-disk path, each covered elsewhere:
+   `test_match_downloader_extract_skips_yaml`, `test_match_downloader_download_archive`, `test_register_downloader`
+   (`tests/test_downloaders.py`), plus `tests/test_ledger.py`.
 4. `tests/test_pipeline.py`: dossier §8 scenarios 1–6.
 5. D-11 (dossier §4, R-6): `_derive_venue_and_team` emits one `dim_venue` row per venue name — `md5(venue_name)`,
    the most frequent non-null city, ties alphabetical (`GROUP BY … QUALIFY row_number() OVER (PARTITION BY venue_name
    ORDER BY city IS NULL, n DESC, city) = 1`). Test: two matches naming one venue with different cities build one row
    with the majority city; a venue whose only city is NULL keeps NULL.
 6. `files_seen` for `quarantine_bounded` is the number of changed members the run tried to parse (D-5: "its files").
+7. D-12 (dossier §4): (a) "up to date" measured against the live snapshot; (b) the registers' sha256 in `runs/<version>.json`;
+   (c) the staging marker — leftover with marker merged first, without it deleted; (d) refuse a second run of the same version
+   before step 2. Each gets a test in `tests/test_pipeline.py`: a gate failure followed by a re-run on the same zip rebuilds and
+   fails again (exit non-zero, `LATEST.json` unchanged); changed registers alone trigger a build; a staging dir with and without
+   the marker; a second run of the same minute refused with nothing written. (e) `publish_snapshot` stays.
 **Verify:** `python -m pytest tests/test_pipeline.py -q` → pass; full suite → pass;
 `grep -rn "ledger\|IdempotencyLedger" src tests` → nothing; `grep -rn "export_gold_parquets" src` → nothing
 (the lane B guard test in `tests/test_publisher.py` keeps the string on purpose);
