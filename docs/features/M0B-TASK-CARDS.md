@@ -279,7 +279,12 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
      override); run the job once with `--archive all_json` and wait; only if it succeeds, create the two schedules
      (D-13d). Re-runnable like `setup`.
    - `bench`: run the bench job (D-13e) and print its output.
-   - `status`: print `LATEST.json` from the bucket and `/ready` from the service.
+   - `status`: print `LATEST.json` from the bucket and `/ready` from the service, called with the owner's identity
+     token (the service is private, subtask 7).
+   - `open`: `gcloud run services proxy` to the private service, so the owner uses the chat page on localhost
+     (UAT U-3, U-4).
+   - The bucket name comes from `BUCKET` (default `cricpulse-data`): bucket names are global and it may be taken.
+   *(Added 12 Nov 2026 at the landing audit.)*
 2. `src/publisher/rollout.py` (D-13a, b): `ensure_api_on(version, settings)` reads the API service through the Cloud
    Run Admin API v2 (REST over `httpx`) and, when its `SNAPSHOT_VERSION` env var differs, updates only that env var
    so Cloud Run starts a new revision, then **waits until that revision is ready and raises if it is not** (D-14c),
@@ -308,10 +313,16 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
    service (bucket mounted read-only at `/mnt/data`, `DATA_DIR=/mnt/data`, `TMP_DIR=/tmp/cricpulse`, `SNAPSHOT_PATH`
    unset, max 2 instances), the job `cricpulse-ingest` (dossier §5.10, `DATA_DIR=/mnt/data`, `TMP_DIR=/tmp/cricpulse`,
    `ROLLOUT_SERVICE` set) and the bench job (D-13e, `TMP_DIR=/tmp/cricpulse`) on the same image. Drop `GCS_BUCKET` and `SYNC_SECRET_TOKEN` (settings gone since
-   M0b.8); keep `GEMINI_API_KEY` from Secret Manager.
-**Verify (builder):** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_rollout.py tests/test_pipeline.py tests/test_config.py tests/test_api_and_agents.py -q && python -m pytest -q && bash -n scripts/infra_m0b.sh && PROJECT_ID=demo-project ALERT_EMAIL=alerts@example.com DEPLOYER_SA=deployer@demo-project.iam.gserviceaccount.com bash scripts/infra_m0b.sh --dry-run setup && PROJECT_ID=demo-project bash scripts/infra_m0b.sh --dry-run first-build && python -m src.publisher.main bench --help && python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))" && ! grep -n "GCS_BUCKET\|SYNC_SECRET_TOKEN" .github/workflows/deploy.yml`
+   M0b.8); keep `GEMINI_API_KEY` from Secret Manager. **The service is private: `--no-allow-unauthenticated`**
+   *(landing audit, 12 Nov 2026 — instead of `--allow-unauthenticated` as before, because R0 is internal (PRD §9),
+   "open deploy" is one of the three bugs it fixes, and with real data and the AI key anyone could run up the bill
+   before rate limits and the spend cap exist (M5))*. The bucket name comes from a repository variable `BUCKET`,
+   default `cricpulse-data`.
+**Verify (builder):** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_rollout.py tests/test_pipeline.py tests/test_config.py tests/test_api_and_agents.py -q && python -m pytest -q && bash -n scripts/infra_m0b.sh && PROJECT_ID=demo-project ALERT_EMAIL=alerts@example.com DEPLOYER_SA=deployer@demo-project.iam.gserviceaccount.com bash scripts/infra_m0b.sh --dry-run setup && PROJECT_ID=demo-project bash scripts/infra_m0b.sh --dry-run first-build && python -m src.publisher.main bench --help && python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))" && ! grep -n "GCS_BUCKET\|SYNC_SECRET_TOKEN" .github/workflows/deploy.yml && grep -q -- "--no-allow-unauthenticated" .github/workflows/deploy.yml && ! grep -q -- "--allow-unauthenticated" .github/workflows/deploy.yml && PROJECT_ID=demo-project bash scripts/infra_m0b.sh --dry-run status && PROJECT_ID=demo-project BUCKET=other-bucket bash scripts/infra_m0b.sh --dry-run open`
 **Owner steps (after landing; the owner runs every `gcloud` command):**
-8. `PROJECT_ID=… ALERT_EMAIL=… DEPLOYER_SA=… bash scripts/infra_m0b.sh setup`
+8. `PROJECT_ID=… ALERT_EMAIL=… DEPLOYER_SA=… bash scripts/infra_m0b.sh setup` (the alert needs gcloud's alpha
+   component: `gcloud components install alpha` once if it is missing; if `cricpulse-data` is taken, set `BUCKET`
+   here and the same name as the repository variable `BUCKET` before step 9)
 9. Push the module branch; GitHub → Actions → *Deploy to Google Cloud Run* → *Run workflow* on that branch.
 10. `bash scripts/infra_m0b.sh first-build`, then `… status`: `LATEST.json` shows the new version and `/ready`
     names the same one. Watch: on Cloud Run `/tmp` is memory, so the build file and DuckDB's spill count against
