@@ -259,7 +259,8 @@ locally; the task is landed after them. The owner then runs the cloud steps 8–
 M0b.10 is done when those pass and D-3 is recorded. No builder runs `gcloud`.
 **Owns:** `scripts/infra_m0b.sh` (new), `src/publisher/rollout.py` (new), `src/publisher/bench.py` (new),
 `tests/test_rollout.py` (new), `src/publisher/main.py` (the rollout call and the `bench` command),
-`tests/test_pipeline.py`, `src/config.py` and `tests/test_config.py` (one setting), `src/api/app.py`,
+`tests/test_pipeline.py`, `src/config.py` and `tests/test_config.py` (one setting; `get_settings` stops creating
+folders, D-14a), `src/api/app.py`,
 `src/api/routes/health.py`, `src/api/schemas.py` and `tests/test_api_and_agents.py` (`/ready` names the version),
 `.github/workflows/deploy.yml`, `Dockerfile`
 *(Owns widened 12 Nov 2026 before the builder started: the first card had no call site and no setting for the
@@ -270,22 +271,31 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
    exists. `--dry-run` prints every `gcloud` command instead of running it. Reads `PROJECT_ID`, `REGION` (default
    `us-central1`, D-13c), `ALERT_EMAIL` and `DEPLOYER_SA` from the environment; nothing personal is written into the
    repo. Subcommands:
-   - `setup`: bucket `cricpulse-data`; the job and API service accounts with their dossier §5.10 roles, and
-     `DEPLOYER_SA` allowed to act as both; the two schedules (D-13d) that start `cricpulse-ingest`; a job-failure
-     email alert to `ALERT_EMAIL`.
-   - `first-build`: run the job once with `--archive all_json` and wait.
+   - `setup` (D-14b; before any job or service exists): bucket `cricpulse-data`; the job and API service accounts
+     with their bucket roles (dossier §5.10); the API account's access to the `GEMINI_API_KEY` secret; `DEPLOYER_SA`
+     allowed to act as both accounts; a job-failure email alert to `ALERT_EMAIL`. No project-wide Cloud Run roles.
+   - `first-build` (D-14b; after the deploy): grant the job's account the right to update the API service only, and
+     the schedules' identity the right to start `cricpulse-ingest` only (with the Sunday run's `--archive all_json`
+     override); run the job once with `--archive all_json` and wait; only if it succeeds, create the two schedules
+     (D-13d). Re-runnable like `setup`.
    - `bench`: run the bench job (D-13e) and print its output.
    - `status`: print `LATEST.json` from the bucket and `/ready` from the service.
 2. `src/publisher/rollout.py` (D-13a, b): `ensure_api_on(version, settings)` reads the API service through the Cloud
    Run Admin API v2 (REST over `httpx`) and, when its `SNAPSHOT_VERSION` env var differs, updates only that env var
-   so Cloud Run starts a new revision. The token comes from the metadata server. Empty `rollout_service` → no-op.
+   so Cloud Run starts a new revision, then **waits until that revision is ready and raises if it is not** (D-14c),
+   with a time limit. The token comes from the metadata server. Empty `rollout_service` → no-op.
    `tests/test_rollout.py`, HTTP mocked at the transport: equal → no update; different → one update that keeps every
-   other env var and setting of the service; an HTTP error raises.
+   other env var and setting of the service, then waits for ready; a revision that fails, or the time limit, raises;
+   an HTTP error raises.
 3. `src/publisher/main.py`: a run that publishes, or stops "up to date", then calls `ensure_api_on` with
    `LATEST.json`'s version. A failed gate never calls it. A rollout error exits non-zero with the reason;
    `LATEST.json` stays written. Tests in `tests/test_pipeline.py` for each of the four cases.
 4. `src/config.py`: `rollout_service: str = ""` — the service's full name
    `projects/<project>/locations/<region>/services/cricpulse-api`; empty = no rollout. Test in `tests/test_config.py`.
+   D-14a: `get_settings()` no longer calls `ensure_directories()`; `run` and `ingest-local` in `main.py` call it
+   themselves. Tests: `get_settings()` on an empty data dir creates nothing (`tests/test_config.py`); a run on an
+   empty data dir creates what it needs (`tests/test_pipeline.py`); the API starts on a data dir it cannot write
+   (`tests/test_api_and_agents.py`).
 5. `/ready` names the snapshot it serves: `snapshot_version` from the opened file's name (`cricket_<version>.duckdb`),
    null for the in-memory fallback. `src/api/app.py` keeps it in `app.state`; `HealthResponse` gains the field. Test
    in `tests/test_api_and_agents.py`. Refusing to start without a snapshot stays M0a.
@@ -295,16 +305,17 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
    every p95 < 300 ms, else `D-3: bake`. Test in `tests/test_pipeline.py` on the fixture build: five rows and a verdict.
 7. `Dockerfile` and `.github/workflows/deploy.yml`: one image; the job runs `python -m src.publisher.main run`, the
    service runs `uvicorn src.api.app:app` on port 8080. `deploy.yml` builds once, then creates or updates the
-   service (bucket mounted read-only at `/mnt/data`, `DATA_DIR=/mnt/data`, `SNAPSHOT_PATH` unset, max 2 instances),
-   the job `cricpulse-ingest` (dossier §5.10, `DATA_DIR=/mnt/data`, `TMP_DIR=/tmp/cricpulse`, `ROLLOUT_SERVICE` set)
-   and the bench job (D-13e) on the same image. Drop `GCS_BUCKET` and `SYNC_SECRET_TOKEN` (settings gone since
+   service (bucket mounted read-only at `/mnt/data`, `DATA_DIR=/mnt/data`, `TMP_DIR=/tmp/cricpulse`, `SNAPSHOT_PATH`
+   unset, max 2 instances), the job `cricpulse-ingest` (dossier §5.10, `DATA_DIR=/mnt/data`, `TMP_DIR=/tmp/cricpulse`,
+   `ROLLOUT_SERVICE` set) and the bench job (D-13e, `TMP_DIR=/tmp/cricpulse`) on the same image. Drop `GCS_BUCKET` and `SYNC_SECRET_TOKEN` (settings gone since
    M0b.8); keep `GEMINI_API_KEY` from Secret Manager.
-**Verify (builder):** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_rollout.py tests/test_pipeline.py tests/test_config.py tests/test_api_and_agents.py -q && python -m pytest -q && bash -n scripts/infra_m0b.sh && PROJECT_ID=demo-project ALERT_EMAIL=alerts@example.com DEPLOYER_SA=deployer@demo-project.iam.gserviceaccount.com bash scripts/infra_m0b.sh --dry-run setup && python -m src.publisher.main bench --help && python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))" && ! grep -n "GCS_BUCKET\|SYNC_SECRET_TOKEN" .github/workflows/deploy.yml`
+**Verify (builder):** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_rollout.py tests/test_pipeline.py tests/test_config.py tests/test_api_and_agents.py -q && python -m pytest -q && bash -n scripts/infra_m0b.sh && PROJECT_ID=demo-project ALERT_EMAIL=alerts@example.com DEPLOYER_SA=deployer@demo-project.iam.gserviceaccount.com bash scripts/infra_m0b.sh --dry-run setup && PROJECT_ID=demo-project bash scripts/infra_m0b.sh --dry-run first-build && python -m src.publisher.main bench --help && python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))" && ! grep -n "GCS_BUCKET\|SYNC_SECRET_TOKEN" .github/workflows/deploy.yml`
 **Owner steps (after landing; the owner runs every `gcloud` command):**
 8. `PROJECT_ID=… ALERT_EMAIL=… DEPLOYER_SA=… bash scripts/infra_m0b.sh setup`
 9. Push the module branch; GitHub → Actions → *Deploy to Google Cloud Run* → *Run workflow* on that branch.
 10. `bash scripts/infra_m0b.sh first-build`, then `… status`: `LATEST.json` shows the new version and `/ready`
-    names the same one.
+    names the same one. Watch: on Cloud Run `/tmp` is memory, so the build file and DuckDB's spill count against
+    the job's 4 GiB; the governor reads the run's peak memory, and out of memory → 8 GiB in `deploy.yml`.
 11. `bash scripts/infra_m0b.sh bench`: the governor records the numbers in `docs/features/M0B-SPIKE-RESULTS.md`
     (cloud section) and the D-3 row. `D-3: bake` → a new card extends `deploy.yml`.
 12. After the next scheduled night, `… status`: a new version, or "up to date" with `/ready` on `LATEST.json`'s version.
@@ -318,6 +329,7 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
 **Owns:** `scripts/run_uat.py` (M0b journeys), `docs/uat/M0B-UAT.md` (new), `README.md` (job usage).
 **Subtasks:**
 1. Add journeys U-1 … U-4 (dossier §8) to `run_uat.py` where they can be automated; script the rest.
+   `run_uat.py` creates the folders it writes: `get_settings()` no longer does (D-14a, 12 Nov 2026).
 2. Record results in `docs/uat/M0B-UAT.md`; the owner signs.
 3. Hand the branch to a fresh review session → `docs/reviews/M0B-REVIEW.md`.
 **Verify:** UAT file complete and signed; review file exists with a verdict.
