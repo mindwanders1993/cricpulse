@@ -34,7 +34,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 4 | M0b.5 Gold from Silver | A | Opus · high | M0b.4 committed |
 | 4 | M0b.7 Publish | B | Opus · **xhigh** | M0b.6 committed |
 | 5 | M0b.8 Pipeline entry + integration test + cleanup | A | Opus · **xhigh** | M0b.5 and M0b.7 committed; lane B merged |
-| 6 | M0b.10 Cloud + D-3 measurement | A + owner | Opus · high | M0b.8 committed |
+| 6 | M0b.10 Cloud + D-3 measurement | A + owner | Opus · **xhigh** *(was high; 12 Nov 2026: it now changes the run)* | M0b.8 committed |
 | 7 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 done |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
@@ -254,20 +254,61 @@ sync test only), `tests/test_snapshot.py`.
 
 ### M0b.10 — Cloud: job, schedule, mount, rollout; settle D-3
 **Goal:** The job runs nightly on Cloud Run and the API picks up each new snapshot.
-**Owns:** `scripts/infra_m0b.sh` (new), `src/publisher/rollout.py` (new), `tests/test_rollout.py` (new),
-`.github/workflows/deploy.yml`, `Dockerfile`, `docs/features/M0B-SPIKE-RESULTS.md` (cloud section).
-**Subtasks:**
-1. `infra_m0b.sh` (owner runs): bucket, two service accounts and their roles, the job with the bucket
-   mounted at `/mnt/data`, two Cloud Scheduler triggers (dossier §5.10), a job-failure email alert.
-2. `rollout.py`: after publish, set the API service's `SNAPSHOT_VERSION` env var through the Cloud
-   Run Admin API (REST + `google-auth`), so Cloud Run starts a new revision. Mocked HTTP tests.
-3. `deploy.yml`: build once; deploy the service and update the job to the same image; service gets
-   the mount (read-only) and `SNAPSHOT_PATH` unset. Job memory 4 GiB (spike §4).
-4. Owner runs the first cloud full build (`--archive all_json`) and one nightly run.
-5. Measure API query latency on the mount (same five queries as M0b.1). Rule D-3: mount if p95
-   < 300 ms, else bake the snapshot into the image (then extend `deploy.yml`).
-**Verify:** job execution succeeds; `gcloud storage cat gs://cricpulse-data/snapshots/LATEST.json` shows the
-new version; `GET /ready` on the service reports it; `python -m pytest tests/test_rollout.py -q` → pass.
+**Split** *(governor, 12 Nov 2026, before the builder started)*: the builder does subtasks 1–7 and proves them
+locally; the task is landed after them. The owner then runs the cloud steps 8–12 with `scripts/infra_m0b.sh`;
+M0b.10 is done when those pass and D-3 is recorded. No builder runs `gcloud`.
+**Owns:** `scripts/infra_m0b.sh` (new), `src/publisher/rollout.py` (new), `src/publisher/bench.py` (new),
+`tests/test_rollout.py` (new), `src/publisher/main.py` (the rollout call and the `bench` command),
+`tests/test_pipeline.py`, `src/config.py` and `tests/test_config.py` (one setting), `src/api/app.py`,
+`src/api/routes/health.py`, `src/api/schemas.py` and `tests/test_api_and_agents.py` (`/ready` names the version),
+`.github/workflows/deploy.yml`, `Dockerfile`
+*(Owns widened 12 Nov 2026 before the builder started: the first card had no call site and no setting for the
+rollout, no way for `/ready` to report the version, a `google-auth` dependency outside Owns, and a Verify only the
+owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written by the governor.)*
+**Subtasks (builder):**
+1. `scripts/infra_m0b.sh` — the owner's one command. Re-runnable: creates what is missing, changes nothing that
+   exists. `--dry-run` prints every `gcloud` command instead of running it. Reads `PROJECT_ID`, `REGION` (default
+   `us-central1`, D-13c), `ALERT_EMAIL` and `DEPLOYER_SA` from the environment; nothing personal is written into the
+   repo. Subcommands:
+   - `setup`: bucket `cricpulse-data`; the job and API service accounts with their dossier §5.10 roles, and
+     `DEPLOYER_SA` allowed to act as both; the two schedules (D-13d) that start `cricpulse-ingest`; a job-failure
+     email alert to `ALERT_EMAIL`.
+   - `first-build`: run the job once with `--archive all_json` and wait.
+   - `bench`: run the bench job (D-13e) and print its output.
+   - `status`: print `LATEST.json` from the bucket and `/ready` from the service.
+2. `src/publisher/rollout.py` (D-13a, b): `ensure_api_on(version, settings)` reads the API service through the Cloud
+   Run Admin API v2 (REST over `httpx`) and, when its `SNAPSHOT_VERSION` env var differs, updates only that env var
+   so Cloud Run starts a new revision. The token comes from the metadata server. Empty `rollout_service` → no-op.
+   `tests/test_rollout.py`, HTTP mocked at the transport: equal → no update; different → one update that keeps every
+   other env var and setting of the service; an HTTP error raises.
+3. `src/publisher/main.py`: a run that publishes, or stops "up to date", then calls `ensure_api_on` with
+   `LATEST.json`'s version. A failed gate never calls it. A rollout error exits non-zero with the reason;
+   `LATEST.json` stays written. Tests in `tests/test_pipeline.py` for each of the four cases.
+4. `src/config.py`: `rollout_service: str = ""` — the service's full name
+   `projects/<project>/locations/<region>/services/cricpulse-api`; empty = no rollout. Test in `tests/test_config.py`.
+5. `/ready` names the snapshot it serves: `snapshot_version` from the opened file's name (`cricket_<version>.duckdb`),
+   null for the in-memory fallback. `src/api/app.py` keeps it in `app.state`; `HealthResponse` gains the field. Test
+   in `tests/test_api_and_agents.py`. Refusing to start without a snapshot stays M0a.
+6. `src/publisher/bench.py` and `python -m src.publisher.main bench`: open the snapshot `LATEST.json` names,
+   read-only; run the five questions timed in `docs/features/m0b_spike/spike.py` (batting career, ODI leaderboard,
+   head-to-head, phase splits, venue profile) 20 warm times each; print p50/p95 per question, then `D-3: mount` when
+   every p95 < 300 ms, else `D-3: bake`. Test in `tests/test_pipeline.py` on the fixture build: five rows and a verdict.
+7. `Dockerfile` and `.github/workflows/deploy.yml`: one image; the job runs `python -m src.publisher.main run`, the
+   service runs `uvicorn src.api.app:app` on port 8080. `deploy.yml` builds once, then creates or updates the
+   service (bucket mounted read-only at `/mnt/data`, `DATA_DIR=/mnt/data`, `SNAPSHOT_PATH` unset, max 2 instances),
+   the job `cricpulse-ingest` (dossier §5.10, `DATA_DIR=/mnt/data`, `TMP_DIR=/tmp/cricpulse`, `ROLLOUT_SERVICE` set)
+   and the bench job (D-13e) on the same image. Drop `GCS_BUCKET` and `SYNC_SECRET_TOKEN` (settings gone since
+   M0b.8); keep `GEMINI_API_KEY` from Secret Manager.
+**Verify (builder):** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_rollout.py tests/test_pipeline.py tests/test_config.py tests/test_api_and_agents.py -q && python -m pytest -q && bash -n scripts/infra_m0b.sh && PROJECT_ID=demo-project ALERT_EMAIL=alerts@example.com DEPLOYER_SA=deployer@demo-project.iam.gserviceaccount.com bash scripts/infra_m0b.sh --dry-run setup && python -m src.publisher.main bench --help && python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))" && ! grep -n "GCS_BUCKET\|SYNC_SECRET_TOKEN" .github/workflows/deploy.yml`
+**Owner steps (after landing; the owner runs every `gcloud` command):**
+8. `PROJECT_ID=… ALERT_EMAIL=… DEPLOYER_SA=… bash scripts/infra_m0b.sh setup`
+9. Push the module branch; GitHub → Actions → *Deploy to Google Cloud Run* → *Run workflow* on that branch.
+10. `bash scripts/infra_m0b.sh first-build`, then `… status`: `LATEST.json` shows the new version and `/ready`
+    names the same one.
+11. `bash scripts/infra_m0b.sh bench`: the governor records the numbers in `docs/features/M0B-SPIKE-RESULTS.md`
+    (cloud section) and the D-3 row. `D-3: bake` → a new card extends `deploy.yml`.
+12. After the next scheduled night, `… status`: a new version, or "up to date" with `/ready` on `LATEST.json`'s version.
+**Done when:** steps 8–12 pass (they are also UAT U-4 in M0b.11).
 **Depends:** M0b.8, M0b.1
 
 ---
