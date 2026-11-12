@@ -6,62 +6,23 @@ response schemas, multi-agent outputs, and security guardrails.
 
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
-import duckdb
 from fastapi.testclient import TestClient
 from rich.console import Console
 from rich.table import Table
 
 from src.ai.guardrails import SQLSecurityGuardrail, SQLSecurityViolation
 from src.api.app import create_app
-from src.builder.loader import DuckDBLoader
 from src.config import get_settings
-from src.parsers.match_parser import MatchParser
-from src.parsers.register_parser import RegisterParser
+from src.snapshot import LatestInfo, read_latest
 
 console = Console()
 
 
-def ensure_uat_database() -> Path:
-    """Ensure a validated DuckDB database exists for UAT execution."""
-    settings = get_settings()
-    published_db = settings.published_dir / "cricket_latest.duckdb"
-
-    if published_db.exists():
-        try:
-            conn = duckdb.connect(str(published_db), read_only=True)
-            conn.close()
-            console.print(f"[green]✓ Found published DuckDB lakehouse:[/green] {published_db}")
-            return published_db
-        except Exception:
-            console.print(
-                f"[yellow]⚠️ {published_db} is locked by an external process (e.g. DBeaver). Falling back to isolated UAT database.[/yellow]"
-            )
-
-    uat_db = settings.data_dir / "uat_test.duckdb"
-    console.print(f"[yellow]Building UAT database from test fixtures at {uat_db}...[/yellow]")
-    if uat_db.exists():
-        uat_db.unlink()
-
-    loader = DuckDBLoader(db_path=uat_db)
-    reg_dfs = RegisterParser().parse_registers(
-        "tests/fixtures/sample_people.csv",
-        "tests/fixtures/sample_names.csv",
-    )
-    loader.load_registers(reg_dfs)
-
-    match_dfs = MatchParser().parse_batch(
-        [
-            "tests/fixtures/sample_t20.json",
-            "tests/fixtures/sample_test.json",
-        ]
-    )
-    loader.load_matches(match_dfs)
-    loader.build_marts()
-    loader.close()
-    return uat_db
+def read_snapshot() -> LatestInfo | None:
+    """The snapshot LATEST.json names, the way the API picks it (M0b.9); reads only, writes nothing."""
+    return read_latest(get_settings().data_dir)
 
 
 def run_uat_suite() -> int:
@@ -70,8 +31,16 @@ def run_uat_suite() -> int:
     console.print("[bold cyan]🏏 CricPulse End-to-End Automated UAT Suite [/bold cyan]")
     console.print("[bold cyan]🏏 =========================================[/bold cyan]\n")
 
-    db_path = ensure_uat_database()
-    app = create_app(db_path=db_path)
+    latest = read_snapshot()
+    if latest is None:
+        console.print(
+            "[bold red]no snapshot yet: run `python -m src.publisher.main run` first[/bold red]"
+        )
+        return 1
+    console.print(
+        f"[green]✓ Serving snapshot {latest.version}[/green] (cutoff {latest.data_cutoff})"
+    )
+    app = create_app()
     results: list[dict[str, Any]] = []
 
     with TestClient(app) as client:
@@ -277,23 +246,27 @@ def run_uat_suite() -> int:
                 }
             )
 
-        # Scenario 8: Internal Scheduled Sync Webhook
+        # Scenario 8: /ready names the snapshot LATEST.json names (UAT U-3)
         try:
-            r = client.post("/api/v1/internal/sync-daily")
-            assert r.status_code in (200, 401)
+            r = client.get("/ready")
+            assert r.status_code == 200
+            served = r.json().get("snapshot_version")
+            assert served == latest.version, (
+                f"/ready says {served}, LATEST.json says {latest.version}"
+            )
             results.append(
                 {
-                    "scenario": "8. Internal Scheduled Sync Webhook",
-                    "endpoint": "POST /api/v1/internal/sync-daily",
+                    "scenario": "8. Ready Names the Live Snapshot",
+                    "endpoint": "GET /ready",
                     "status": "PASS",
-                    "details": f"Endpoint mounted and responsive (status: {r.status_code})",
+                    "details": f"snapshot_version {served} matches LATEST.json",
                 }
             )
         except Exception as e:
             results.append(
                 {
-                    "scenario": "8. Internal Scheduled Sync Webhook",
-                    "endpoint": "POST /api/v1/internal/sync-daily",
+                    "scenario": "8. Ready Names the Live Snapshot",
+                    "endpoint": "GET /ready",
                     "status": "FAIL",
                     "details": str(e),
                 }

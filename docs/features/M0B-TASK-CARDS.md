@@ -361,7 +361,10 @@ branch to a fresh review (5). Cloud U-4 waits for the deploy (D-15).
    `scripts/infra_m0b.sh`, run at the deploy (D-15).
 4. *Owner:* asks the U-3 question in the chat and signs `M0B-UAT.md`.
 5. *Governor:* a fresh review session → `docs/reviews/M0B-REVIEW.md` (`kensa`).
-**Verify (builder):** `source .venv/bin/activate && ruff check src tests scripts/run_uat.py && ruff format --check src tests scripts/run_uat.py && python -m pytest -q && python scripts/run_uat.py && test -f docs/uat/M0B-UAT.md && grep -q "U-4" docs/uat/M0B-UAT.md`
+**Verify (builder):** `source .venv/bin/activate && ruff check src tests scripts/run_uat.py && ruff format --check src tests scripts/run_uat.py && python -m pytest -q && GEMINI_API_KEY= python scripts/run_uat.py && test -f docs/uat/M0B-UAT.md && grep -q "U-4" docs/uat/M0B-UAT.md`
+*(Governor, 12 Nov 2026, at landing: the gate runs the UAT script on the mock model, instead of the live one,
+because a gate must not depend on an outside key or network. The local key was rejected (401), so scenarios 4–7
+failed on the live model only. The live model is checked by the owner's U-3 question.)*
 **Done when:** 1–3 landed; the owner signed `M0B-UAT.md`; `M0B-REVIEW.md` has a verdict.
 **Depends:** M0b.10 landed (D-15), M0b.12 landed (D-16)
 **Blocked note 1** *(12 Nov 2026)*: U-1 stopped at the gate `player_match_grain_uniqueness` (2 duplicate rows; 23,241
