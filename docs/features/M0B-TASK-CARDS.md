@@ -436,7 +436,13 @@ of the proof's `git status` check.
    gate's result names `removed`. "Up to date" also needs no error-table row newer than `LATEST.json`'s version.
 6. **Report:** `runs/<version>.json` lists each rejected file with its `action`; the console line adds the removed
    count. `PARSER_VERSION` stays 1 (D-17g).
-7. **Tests**, one per line, on fixtures in temp dirs (a monkeypatched parser or `PARSER_VERSION` may stand in for a
+7. **Correction** *(governor, 12 Nov 2026, after the first build, D-17h)*: `quarantine_bounded` counts the run's own
+   rejections plus the error table's rows newer than `LATEST.json`'s version whose ids the run did not re-read, and
+   adds that same number to `files_seen` for the limit; no `LATEST.json` → the run's own only. A retry after that gate
+   failed then fails again. Test it: the 6-broken-files run, then a retry on the same archive, both fail
+   `quarantine_bounded` and publish nothing; after the files parse (or after a publish moves `LATEST.json` past their
+   rows) the held rows stop counting.
+8. **Tests**, one per line, on fixtures in temp dirs (a monkeypatched parser or `PARSER_VERSION` may stand in for a
    parser change): an unchanged file newly rejected leaves every Silver table and the manifest, Gold lacks it, the
    run publishes, the error table and the report name it `removed` · a rejected new revision keeps the old rows,
    `kept_last_good` · a rejected new id is `not_loaded` · a second run in a row with the same rejected file stops
