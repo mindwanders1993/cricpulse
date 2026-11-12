@@ -39,6 +39,8 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 8 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 landed *(its cloud steps wait for the deploy, D-15)* and M0b.12 landed |
 | 9 | M0b.13 Fix: a match a newer parser rejects leaves the app; the error table (D-17) | A | Opus · **xhigh** | now: R-7 ruled, M0b.12 landed; before the review |
 | 10 | M0b.14 UAT refresh after D-17 | A | Sonnet · medium | M0b.13 landed; runs alone (it writes `data/`) |
+| 11 | M0b.15 Fix round: run safety and the absence log (D-18a, b, d, e) | A | Opus · **xhigh** | now: the review is written |
+| 12 | M0b.16 Fix: a name listed twice for one team (D-18c) | A | Opus · high | M0b.15 landed (same checkout, one builder at a time) |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -480,3 +482,60 @@ of the proof's `git status` check.
 **Done when:** 1–4 recorded as expected. Anything different (the count drops, the second run publishes again, the
 rows are not `not_loaded`, a gate fails) → BLOCKED with the output; fix nothing.
 **Depends:** M0b.13 landed
+
+---
+
+### M0b.15 — Fix round: one run at a time, the manifest before staging goes, the absence log
+**Goal:** Two runs can never overlap, a crash never ends in a false "up to date", a match missing from the full
+archive is named in the run report, and a memory failure stops the run instead of removing a healthy match.
+**Why:** `docs/reviews/M0B-REVIEW.md` findings 1, 3, 4 and 8, ruled D-18 (a), (b), (d), (e) on 13 Nov 2026.
+**Colour:** 🔴 (`src/publisher/`)
+**Owns:** `src/publisher/main.py`, `src/publisher/silver.py`, `src/publisher/archive.py`; `tests/test_pipeline.py`,
+`tests/test_silver.py`, `tests/test_archive.py`; new fixture files under `tests/fixtures/`. The untracked
+`08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` is the owner's: leave it alone and out of the proof's `git status` check.
+**Subtasks:**
+1. **The run lock** (D-18a): `run` and `ingest-local` take `<data_dir>/run.lock` before anything else, the staging
+   recovery included. Create it exclusively (`O_CREAT | O_EXCL`); it holds the run version and start time. A held
+   lock → exit non-zero with "another run is in progress: <version>, started <time>". The lock goes in a `finally`,
+   on success and on failure. A lock older than 2 hours is a dead run's: log a warning, take it over. `bench` takes
+   no lock (it only reads).
+2. **The manifest before staging goes** (D-18b): `silver.merge` no longer deletes the staging folder. The run deletes
+   it after step 7 saves the manifest (`main._apply`, and the D-12(c) recovery). The assertion at
+   `tests/test_silver.py:61` (the merge deletes staging) moves to a pipeline test: the run deletes staging only
+   after the manifest is saved. That is the one test this card may rewrite.
+3. **The absence log** (D-18d): on an `--archive all_json` run, the run report gets `absent_from_archive`, the sorted
+   manifest ids that are not members of the archive, and the console prints their count. Nothing is deleted. Other
+   archives and `ingest-local` write no such field.
+4. **A passing failure stops the run** (D-18e): in `parse_to_staging`, `MemoryError` and `OSError` are re-raised
+   instead of quarantined. Every other exception stays D-5's quarantine.
+5. **Tests**, one per line, in temp dirs: a second run while the lock is held exits non-zero, and changes nothing in
+   Silver, the manifest, the error table or `LATEST.json` · the lock is gone after a successful run and after a failed
+   one · a lock older than 2 hours is taken over · a crash between the merge and the manifest write (staging still
+   there, with its marker) is finished by the next run, and the match reaches the manifest and Gold · an `all_json`
+   run whose archive lacks a manifest id names it under `absent_from_archive`, and the match stays in Gold · a
+   `MemoryError` from the parser stops the run, nothing is removed, and the error table is unchanged.
+**Verify:** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_pipeline.py tests/test_silver.py tests/test_archive.py -q && python -m pytest -q`
+**Done when:** each D-18 line (a), (b), (d), (e) has a passing test named in the handoff note; the full suite passes;
+no test reads or writes `data/`.
+**Depends:** D-18 ruled
+
+---
+
+### M0b.16 — Fix: a name listed twice for one team keeps one row
+**Goal:** A Cricsheet file that lists one name twice in the same team parses, with that player once, instead of
+stopping every nightly publish at the uniqueness gate.
+**Why:** `docs/reviews/M0B-REVIEW.md` finding 2: D-16(b) was ruled on 12 Nov 2026 but never built. Ruled D-18(c).
+**Colour:** 🟡 (the match parse; no red-zone file)
+**Owns:** `src/parsers/match_parser.py`, `tests/test_match_parser.py`, new fixture files under `tests/fixtures/`. The
+untracked `08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` is the owner's: leave it alone and out of the proof's
+`git status` check.
+**Subtasks:**
+1. In the match-players loop (`match_parser.py`, the D-16(c) check), an exact repeat (the same resolved player id in
+   the same team's list) is skipped, so the player gets one `match_players` row. A comment cites `M0b dossier D-16(b)`.
+   D-16(c) (both teams) still raises. `PARSER_VERSION` stays 1 (D-18c).
+2. Tests: a fixture made from a real-shaped file with one name twice in one team parses, and has one row for that
+   player; the full fixture build then passes `player_match_grain_uniqueness`; the D-16(c) test still passes
+   unchanged.
+**Verify:** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_match_parser.py -q && python -m pytest -q`
+**Done when:** both tests pass; the full suite passes.
+**Depends:** M0b.15 landed (one builder at a time in this checkout)
