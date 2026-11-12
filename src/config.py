@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     nightly_archive: str = "recently_added_7_json"  # M0b dossier D-2
     keep_snapshots: int = 7  # M0b dossier D-7
     keep_raw_days: int = 30  # M0b dossier D-7
+    # M0b dossier D-13a: projects/<project>/locations/<region>/services/cricpulse-api; empty = no rollout
+    rollout_service: str = ""
 
     @model_validator(mode="after")
     def set_default_tmp_dir(self) -> "Settings":
@@ -65,6 +67,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    settings = Settings()
-    settings.ensure_directories()
-    return settings
+    # M0b dossier D-14a: creates no folders, so the API starts on the read-only mount; the run makes them
+    return Settings()

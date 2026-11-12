@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from src.config import Settings, get_settings
 
 
@@ -36,3 +38,27 @@ def test_settings_m0b_directories(temp_dir: Path):
     s.ensure_directories()
     for name in ("bronze", "silver", "snapshots", "runs", "tmp"):
         assert (temp_dir / "data" / name).is_dir()
+
+
+def test_get_settings_creates_no_folders(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    # M0b dossier D-14a: the API calls get_settings() on a read-only mount; the run makes the folders
+    monkeypatch.setenv("DATA_DIR", str(temp_dir / "data"))
+    monkeypatch.setenv("TMP_DIR", str(temp_dir / "scratch"))
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+    finally:
+        get_settings.cache_clear()
+
+    assert settings.data_dir == temp_dir / "data"
+    assert list(temp_dir.iterdir()) == []
+
+
+def test_settings_rollout_service(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    # M0b dossier D-13a: empty means no rollout (local runs); the cloud job names the API service
+    monkeypatch.delenv("ROLLOUT_SERVICE", raising=False)
+    assert Settings(_env_file=None, data_dir=temp_dir).rollout_service == ""
+
+    name = "projects/demo-project/locations/us-central1/services/cricpulse-api"
+    monkeypatch.setenv("ROLLOUT_SERVICE", name)
+    assert Settings(_env_file=None, data_dir=temp_dir).rollout_service == name

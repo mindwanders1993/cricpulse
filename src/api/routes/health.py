@@ -17,11 +17,16 @@ def readiness_check(request: Request) -> HealthResponse:
     con = getattr(request.app.state, "db", None)
     if not con:
         return HealthResponse(status="degraded", database_connected=False, tables_count=0)
+    version = getattr(request.app.state, "snapshot_version", None)
 
     try:
         tables = con.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'gold';"
         ).fetchone()[0]
-        return HealthResponse(status="ready", database_connected=True, tables_count=tables)
+        return HealthResponse(
+            status="ready", database_connected=True, tables_count=tables, snapshot_version=version
+        )
     except Exception:
-        return HealthResponse(status="unready", database_connected=False, tables_count=0)
+        return HealthResponse(
+            status="unready", database_connected=False, tables_count=0, snapshot_version=version
+        )

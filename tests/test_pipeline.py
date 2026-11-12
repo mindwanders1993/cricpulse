@@ -17,7 +17,9 @@ from typer.testing import CliRunner
 from src.config import Settings
 from src.publisher import main, silver
 from src.publisher.archive import parse_to_staging
+from src.publisher.bench import Timing, verdict
 from src.publisher.quality_gates import QualityGateFailure
+from src.publisher.rollout import RolloutError
 from src.snapshot import latest_path, read_latest
 from src.utils import compute_bytes_sha256
 
@@ -66,6 +68,7 @@ def settings(tmp_path: Path) -> Settings:
         nightly_archive=ARCHIVE,
         keep_snapshots=7,
         keep_raw_days=30,
+        rollout_service="",
     )
     s.ensure_directories()
     return s
@@ -375,3 +378,132 @@ def test_ingest_local_runs_the_same_steps_on_a_directory(
     assert second.exit_code == 0, second.output
     assert "Up to date" in second.output
     assert site.calls == []  # a local source downloads nothing
+
+
+def test_a_run_on_an_empty_data_dir_creates_what_it_needs(
+    monkeypatch, settings: Settings, site: Cricsheet, tmp_path: Path
+):
+    # M0b dossier D-14a: get_settings() creates no folders, so the run makes its own
+    bare = settings.model_copy(
+        update={"data_dir": tmp_path / "bare", "tmp_dir": tmp_path / "bare" / "tmp"}
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: bare)
+    site.serve(BOTH)
+
+    result = _cli(monkeypatch, 1, "run")
+
+    assert result.exit_code == 0, result.output
+    assert read_latest(bare.data_dir).match_count == 2
+    assert _report(bare, 1)["changed"] == 2
+
+
+# --- M0b dossier D-13a: the API catches up after every run that ends with a live snapshot ---
+
+
+@pytest.fixture
+def rollouts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The versions the run asked the API service to serve."""
+    asked: list[str] = []
+    monkeypatch.setattr(main, "ensure_api_on", lambda version, settings: asked.append(version))
+    return asked
+
+
+def test_a_publish_rolls_the_api_out_to_the_new_version(
+    monkeypatch, settings: Settings, site: Cricsheet, rollouts: list[str]
+):
+    site.serve(BOTH)
+
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+
+    assert rollouts == [_version(1)]
+
+
+def test_an_up_to_date_run_rolls_the_api_out_to_the_live_version(
+    monkeypatch, settings: Settings, site: Cricsheet, rollouts: list[str]
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+
+    result = _cli(monkeypatch, 2, "run")
+
+    assert result.exit_code == 0, result.output
+    assert "Up to date" in result.output
+    assert rollouts == [_version(1), _version(1)]
+
+
+def test_a_failed_gate_never_rolls_out(
+    monkeypatch, settings: Settings, site: Cricsheet, rollouts: list[str]
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    broken = {f"bad{i}.json": b"not json" for i in range(6)}  # 6 > max(5, 1% of 7): D-5
+    site.serve({"1001.json": _edited(T20, city="Edited City"), "1002.json": TEST, **broken})
+
+    result = _cli(monkeypatch, 2, "run")
+
+    assert isinstance(result.exception, QualityGateFailure)
+    assert rollouts == [_version(1)]
+
+
+def test_a_failed_rollout_exits_non_zero_and_keeps_latest_json(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    def not_ready(version: str, settings: Settings) -> None:
+        raise RolloutError(
+            "revision cricpulse-api-00002-abc is not ready: container failed to start"
+        )
+
+    monkeypatch.setattr(main, "ensure_api_on", not_ready)
+    site.serve(BOTH)
+
+    result = _cli(monkeypatch, 1, "run")
+
+    assert result.exit_code == 1
+    assert f"API rollout to {_version(1)} failed" in result.output
+    assert "is not ready: container failed to start" in result.output
+    assert read_latest(settings.data_dir).version == _version(1)
+    assert _report(settings, 1)["changed"] == 2
+
+
+# --- M0b dossier D-3 and D-13e: the bench ---------------------------------------------------
+
+
+def test_bench_times_the_five_questions_on_the_live_snapshot(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    before = _tree(settings.data_dir)
+    # The spike's players are not in the fixture build; these two are (tests/fixtures registers)
+    players = ("--batter", "Q de Kock", "--h2h-batter", "Q de Kock", "--h2h-bowler", "Ali Khan")
+
+    result = _cli(monkeypatch, 2, "bench", *players)
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.strip().splitlines()
+    assert lines[0] == f"Bench on {_version(1)}: p50 and p95 of 20 warm runs per question"
+    rows = [line.split() for line in lines[1:-1]]
+    assert [r[0] for r in rows] == [
+        "batting_career",
+        "leaderboard",
+        "matchup_h2h",
+        "phase_splits",
+        "venue_profile",
+    ]
+    assert all((r[1], r[3], r[4], r[6]) == ("p50", "ms", "p95", "ms") for r in rows)
+    assert lines[-1] in ("D-3: mount", "D-3: bake")
+    assert _tree(settings.data_dir) == before  # opened read-only
+
+
+def test_bench_without_latest_json_exits_non_zero(monkeypatch, settings: Settings, site: Cricsheet):
+    result = _cli(monkeypatch, 1, "bench")
+
+    assert result.exit_code == 1
+    assert "No LATEST.json" in result.output
+
+
+def test_bench_verdict_is_mount_only_when_every_p95_is_under_300_ms():
+    fast = [Timing("leaderboard", 3.2, 4.3), Timing("phase_splits", 100.0, 299.9)]
+    slow = [*fast, Timing("matchup_h2h", 250.0, 300.0)]
+
+    assert (verdict(fast), verdict(slow)) == ("mount", "bake")

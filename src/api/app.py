@@ -1,3 +1,4 @@
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from src.snapshot import resolve_snapshot_path
 from src.utils import setup_logging
 
 logger = setup_logging()
+
+# M0b dossier D-8: a published snapshot is snapshots/cricket_<version>.duckdb
+SNAPSHOT_NAME = re.compile(r"cricket_(v\d{8}T\d{4}Z)\.duckdb")
 
 
 def create_app(
@@ -36,10 +40,14 @@ def create_app(
         if target_db.exists():
             logger.info("mounting_published_duckdb_snapshot", path=str(target_db))
             app.state.db = duckdb.connect(str(target_db), read_only=True)
+            # M0b task card M0b.10: /ready names the version, so a rollout can be checked
+            named = SNAPSHOT_NAME.fullmatch(target_db.name)
+            app.state.snapshot_version = named.group(1) if named else None
         else:
             logger.warn("no_published_snapshot_found_using_in_memory", path=str(target_db))
             app.state.db = duckdb.connect(":memory:")
             app.state.db.execute(INIT_SCHEMA_SQL)
+            app.state.snapshot_version = None
 
         # 2. Initialize Gemini Client
         app.state.gemini = gemini_client or GeminiClient(settings=settings)

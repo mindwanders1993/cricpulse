@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import polars as pl
 import typer
 from rich.console import Console
@@ -17,8 +18,10 @@ from src.parsers.match_parser import PARSER_VERSION
 from src.parsers.register_parser import RegisterParser
 from src.publisher import manifest, silver
 from src.publisher.archive import iter_changed, parse_to_staging
+from src.publisher.bench import BATTER, H2H_BATTER, H2H_BOWLER, RUNS, run_bench, verdict
 from src.publisher.publisher import SnapshotPublisher
 from src.publisher.quality_gates import run_quality_gates
+from src.publisher.rollout import RolloutError, ensure_api_on
 from src.snapshot import LatestInfo, read_latest
 from src.utils import compute_bytes_sha256, compute_file_sha256, setup_logging
 
@@ -190,6 +193,17 @@ def _pipeline(
     return info
 
 
+def _roll_out(settings: Settings) -> None:
+    """M0b dossier D-13a: after a run that ends with a live snapshot, the API serves LATEST.json's."""
+    version = read_latest(settings.data_dir).version
+    try:
+        ensure_api_on(version, settings)
+    except (httpx.HTTPError, RolloutError) as e:
+        # M0b dossier D-13a: a failed rollout exits non-zero so the failure alert fires; LATEST.json stays
+        console.print(f"[bold red]API rollout to {version} failed:[/bold red] {e}", soft_wrap=True)
+        raise typer.Exit(1) from e
+
+
 @app.command()
 def ingest_local(
     matches_dir: Annotated[
@@ -215,8 +229,10 @@ def ingest_local(
     if not any(matches_dir.glob("*.json")):
         console.print("[bold red]No .json files found in directory![/bold red]")
         raise typer.Exit(1)
+    settings = get_settings()
+    settings.ensure_directories()  # M0b dossier D-14a: the run makes its folders, get_settings() does not
     _pipeline(
-        get_settings(),
+        settings,
         source=str(matches_dir),
         reparse_all=False,
         get_registers=lambda day: (people_csv, names_csv),
@@ -242,6 +258,7 @@ def run(
 ) -> None:
     """Nightly job: download, parse what changed, merge into Silver, build Gold, gate, publish."""
     settings = get_settings()
+    settings.ensure_directories()  # M0b dossier D-14a: the run makes its folders, get_settings() does not
     archive = archive or settings.nightly_archive  # M0b dossier D-2
     _pipeline(
         settings,
@@ -255,6 +272,32 @@ def run(
             reparse_all,
         ),
     )
+    _roll_out(settings)  # a failed gate raised above and never gets here
+
+
+@app.command()
+def bench(
+    batter: Annotated[
+        str, typer.Option(help="Batter for the batting career and phase splits questions")
+    ] = BATTER,
+    h2h_batter: Annotated[
+        str, typer.Option(help="Batter in the head-to-head question")
+    ] = H2H_BATTER,
+    h2h_bowler: Annotated[
+        str, typer.Option(help="Bowler in the head-to-head question")
+    ] = H2H_BOWLER,
+) -> None:
+    """D-3: time the five spike questions on the live snapshot, read-only; print p50/p95 and the verdict."""
+    settings = get_settings()
+    info = read_latest(settings.data_dir)
+    if info is None:
+        console.print("[bold red]No LATEST.json: no snapshot to bench.[/bold red]")
+        raise typer.Exit(1)
+    timings = run_bench(settings.data_dir / info.path, batter, h2h_batter, h2h_bowler)
+    console.print(f"Bench on {info.version}: p50 and p95 of {RUNS} warm runs per question")
+    for t in timings:
+        console.print(f"{t.question:<15} p50 {t.p50_ms:8.1f} ms  p95 {t.p95_ms:8.1f} ms")
+    console.print(f"D-3: {verdict(timings)}")
 
 
 if __name__ == "__main__":
