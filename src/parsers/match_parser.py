@@ -163,9 +163,13 @@ class MatchParser:
         for team_name, player_list in info.get("players", {}).items():
             for p_name in player_list:
                 player_id = resolve_id(p_name)
-                # M0b dossier D-16(c): one player on both sides is quarantined (D-5), never given a team
-                if team_of_player.setdefault(player_id, team_name) != team_name:
-                    raise ValueError(f"player listed for both teams: {p_name}")
+                if player_id in team_of_player:
+                    # M0b dossier D-16(c): one player on both sides is quarantined (D-5), never given a team
+                    if team_of_player[player_id] != team_name:
+                        raise ValueError(f"player listed for both teams: {p_name}")
+                    # M0b dossier D-16(b): an exact repeat in one team's list carries nothing; keep one row
+                    continue
+                team_of_player[player_id] = team_name
                 match_players_rows.append(
                     {
                         "match_id": match_id,
