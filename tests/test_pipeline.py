@@ -3,6 +3,7 @@
 import datetime as dt
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -702,6 +703,235 @@ def test_held_rows_stop_counting_once_a_publish_moves_latest_json_past_them(
     assert result.exit_code == 0, result.output
     assert gated == [(4, 4), (4, 4)]
     assert read_latest(settings.data_dir).version == _version(4)
+
+
+# --- M0b dossier D-18(a): one run at a time -------------------------------------------------
+
+
+def _lock(settings: Settings) -> Path:
+    return settings.data_dir / main.RUN_LOCK
+
+
+def test_a_run_started_while_another_holds_the_lock_exits_non_zero_and_changes_nothing(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    site.serve({**BOTH, "1003.json": T20, "bad.json": b"not json"})
+    real_parse = main.parse_to_staging
+    seen: dict = {}
+
+    def parse_then_start_another_run(items, staging):
+        # Run 2 has parsed and not yet written its marker: the window review finding 1 probed
+        state = real_parse(items, staging)
+        if not seen:
+            seen["lock"] = json.loads(_lock(settings).read_text())
+            seen["before"], calls = _tree(settings.data_dir), len(site.calls)
+            seen["second"] = _cli(monkeypatch, 3, "run")
+            seen["after"], seen["downloads"] = _tree(settings.data_dir), site.calls[calls:]
+        return state
+
+    monkeypatch.setattr(main, "parse_to_staging", parse_then_start_another_run)
+
+    first = _cli(monkeypatch, 2, "run")
+
+    second = seen["second"]
+    assert second.exit_code == 1
+    assert (
+        f"another run is in progress: {_version(2)}, started 2026-11-01T02:02:00+00:00"
+        in second.output
+    )
+    assert seen["lock"] == {"version": _version(2), "started": "2026-11-01T02:02:00+00:00"}
+    # Nothing changed: Silver, the manifest, the error table, LATEST.json, and run 2's staging
+    assert seen["after"] == seen["before"]
+    assert any(p.startswith(f"silver/_staging/{_version(2)}/") for p in seen["before"])
+    assert seen["downloads"] == []
+    assert first.exit_code == 0, first.output
+    assert _ids(settings) == ["1001", "1002", "1003"]
+    assert _manifest_ids(settings) == {"1001", "1002", "1003"}
+    assert _silver_ids(settings, "matches") == {"1001", "1002", "1003"}
+    assert _error_table(settings)["bad"]["action"] == "not_loaded"
+
+
+def test_the_lock_is_gone_after_a_successful_run_and_after_a_failed_one(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    assert not _lock(settings).exists()
+    site.serve({**BOTH, **SIX_BROKEN})
+
+    result = _cli(monkeypatch, 2, "run")
+
+    assert isinstance(result.exception, QualityGateFailure)
+    assert not _lock(settings).exists()
+
+
+def test_a_lock_older_than_two_hours_is_taken_over(
+    monkeypatch, settings: Settings, site: Cricsheet, caplog: pytest.LogCaptureFixture
+):
+    site.serve(BOTH)
+    young = {"version": "v20261101T0002Z", "started": "2026-11-01T00:02:00+00:00"}
+    _lock(settings).write_text(json.dumps(young))  # 1 h 59 min before run 1 at 02:01
+
+    refused = _cli(monkeypatch, 1, "run")
+
+    assert refused.exit_code == 1
+    assert "another run is in progress: v20261101T0002Z" in refused.output
+    assert json.loads(_lock(settings).read_text()) == young  # another run's lock is left alone
+    assert read_latest(settings.data_dir) is None
+    dead = {"version": "v20261101T0000Z", "started": "2026-11-01T00:00:00+00:00"}
+    _lock(settings).write_text(json.dumps(dead))  # 2 h 2 min before run 2 at 02:02
+
+    result = _cli(monkeypatch, 2, "run")
+
+    assert result.exit_code == 0, result.output
+    assert "run_lock_taken_over" in caplog.text
+    assert read_latest(settings.data_dir).version == _version(2)
+    assert not _lock(settings).exists()
+
+
+def test_an_empty_lock_ages_by_its_file_time(
+    monkeypatch, settings: Settings, site: Cricsheet, caplog: pytest.LogCaptureFixture
+):
+    # A run killed between creating the lock and writing it; its file time is 3 hours before 02:01
+    _lock(settings).touch()
+    three_hours_before = dt.datetime(2026, 10, 31, 23, 1, tzinfo=dt.UTC).timestamp()
+    os.utime(_lock(settings), (three_hours_before, three_hours_before))
+    site.serve(BOTH)
+
+    result = _cli(monkeypatch, 1, "run")
+
+    assert result.exit_code == 0, result.output
+    assert "run_lock_taken_over" in caplog.text
+    assert not _lock(settings).exists()
+
+
+# --- M0b dossier D-18(b): the manifest is saved before staging goes -------------------------
+
+
+def test_the_run_deletes_staging_only_after_the_manifest_is_saved(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    staging = settings.silver_dir / "_staging" / _version(1)
+    real_save = manifest.save
+    marker_at_save: list[bool] = []
+
+    def save(data_dir, df):
+        marker_at_save.append((staging / main.PARSED_MARKER).exists())
+        real_save(data_dir, df)
+
+    monkeypatch.setattr(manifest, "save", save)
+    site.serve(BOTH)
+
+    result = _cli(monkeypatch, 1, "run")
+
+    assert result.exit_code == 0, result.output
+    assert marker_at_save == [True]
+    assert not staging.exists()
+
+
+def test_a_crash_between_the_merge_and_the_manifest_write_is_finished_by_the_next_run(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve({"1002.json": TEST})
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    real_save = manifest.save
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("the job died before the manifest write")
+
+    monkeypatch.setattr(manifest, "save", crash)
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 2, "run").exit_code != 0
+    leftover = settings.silver_dir / "_staging" / _version(2)
+    assert (leftover / main.PARSED_MARKER).exists()
+    assert "1001" in _silver_ids(settings, "matches")  # merged
+    assert _manifest_ids(settings) == {"1002"}  # the manifest write never happened
+    monkeypatch.setattr(manifest, "save", real_save)
+    site.serve({"1002.json": TEST})  # 1001 is in no archive now: only the leftover holds it
+
+    result = _cli(monkeypatch, 3, "run")
+
+    assert result.exit_code == 0, result.output
+    assert "Up to date" not in result.output
+    assert not leftover.exists()
+    assert _manifest_ids(settings) == {"1001", "1002"}
+    assert read_latest(settings.data_dir).version == _version(3)
+    assert _ids(settings) == ["1001", "1002"]
+
+
+# --- M0b dossier D-18(d): the absence log ---------------------------------------------------
+
+
+def test_a_full_archive_run_names_the_manifest_ids_it_lacks_and_keeps_them(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(WORLD)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    site.files[f"/downloads/{main.ALL_JSON}.zip"] = _zip({"1002.json": TEST, "1003.json": T20})
+
+    result = _cli(monkeypatch, 2, "run", "--archive", main.ALL_JSON)
+
+    assert result.exit_code == 0, result.output
+    assert "absent from archive: 2" in result.output
+    assert _report(settings, 2)["absent_from_archive"] == ["1001", "9001"]
+    assert _ids(settings) == ["1001", "1002", "1003", "9001"]  # nothing is deleted (§5.3)
+    assert _manifest_ids(settings) == {"1001", "1002", "1003", "9001"}
+    assert "absent_from_archive" not in _report(settings, 1)  # the nightly archive's run
+    assert "absent from archive" not in _cli(monkeypatch, 3, "run").output
+
+    again = _cli(monkeypatch, 4, "run", "--archive", main.ALL_JSON)
+
+    assert again.exit_code == 0, again.output
+    assert "Up to date" in again.output
+    assert "absent from archive: 2" in again.output
+
+
+def test_ingest_local_writes_no_absence_log(
+    monkeypatch, settings: Settings, site: Cricsheet, tmp_path: Path
+):
+    matches_dir = tmp_path / "matches"
+    matches_dir.mkdir()
+    (matches_dir / "1002.json").write_bytes(TEST)
+    argv = ("ingest-local", "-m", str(matches_dir), "-p", str(FIXTURES / "sample_people.csv"))
+    argv += ("-n", str(FIXTURES / "sample_names.csv"))
+
+    result = _cli(monkeypatch, 1, *argv)
+
+    assert result.exit_code == 0, result.output
+    assert "absent from archive" not in result.output
+    assert "absent_from_archive" not in _report(settings, 1)
+
+
+# --- M0b dossier D-18(e): a passing failure stops the run -----------------------------------
+
+
+def test_a_memory_error_from_the_parser_stops_the_run_and_removes_nothing(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(WORLD)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    silver_before = _tree(settings.silver_dir)  # Silver, the manifest and the error table
+    latest_before = latest_path(settings.data_dir).read_bytes()
+
+    def parse_json(self, match_id, data):
+        if match_id == "9001":
+            raise MemoryError("out of memory")
+        return REAL_PARSE_JSON(self, match_id, data)
+
+    monkeypatch.setattr(MatchParser, "parse_json", parse_json)
+    for module in (main, archive):
+        monkeypatch.setattr(module, "PARSER_VERSION", 2)  # a parser bump: 9001 is read again
+
+    result = _cli(monkeypatch, 2, "run")
+
+    assert isinstance(result.exception, MemoryError)
+    assert _tree(settings.silver_dir) == silver_before
+    assert quarantine.quarantine_path(settings.data_dir).exists()
+    assert _error_table(settings) == {}
+    assert latest_path(settings.data_dir).read_bytes() == latest_before
+    assert not _lock(settings).exists()
 
 
 # --- ingest-local: the same steps on a directory --------------------------------------------

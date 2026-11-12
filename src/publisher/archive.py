@@ -31,10 +31,12 @@ def iter_changed(
     parser_version: int,
     reparse_all: bool,
     quarantine_df: pl.DataFrame | None = None,
+    member_ids: set[str] | None = None,
 ) -> Iterator[tuple[str, str, bytes]]:
     """Yield (match_id, sha256, raw_bytes) for .json members that are new or changed; no extraction.
 
     A member the error table `quarantine_df` holds is skipped, unless `reparse_all` (M0b dossier D-17d).
+    `member_ids`, when given, receives the id of every .json member read, changed or not (D-18d).
     """
     seen: set[str] = set()
     with zipfile.ZipFile(zip_path) as zf:
@@ -46,6 +48,8 @@ def iter_changed(
                 # M0b dossier D-9: a duplicate id fails loudly instead of losing a match
                 raise ValueError(f"duplicate match id {match_id!r} in {zip_path.name}")
             seen.add(match_id)
+            if member_ids is not None:
+                member_ids.add(match_id)
             raw = zf.read(member)
             sha = compute_bytes_sha256(raw)
             if not reparse_all and manifest.is_current(manifest_df, match_id, sha, parser_version):
@@ -87,6 +91,10 @@ def parse_to_staging(
             data = orjson.loads(raw)
             dfs = parser.parse_json(match_id, data)
             revision = data.get("meta", {}).get("revision")
+        except (MemoryError, OSError):
+            # M0b dossier D-18(e): a passing failure says nothing about the file, so it stops the run
+            # instead of marking a healthy live match removed (D-17a)
+            raise
         except Exception as exc:  # M0b dossier D-5: quarantine the file and continue
             error = f"{type(exc).__name__}: {exc}"
             logger.warning("match_quarantined", match_id=match_id, error=error)

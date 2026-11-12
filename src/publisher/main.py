@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import shutil
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -36,6 +37,12 @@ PARSED_MARKER = "_parsed.parquet"
 # M0b dossier D-17(f): the run's error-table rows, its planned removals among them, written beside the
 # marker and before it, so a crashed removal is finished like a crashed merge
 REJECTED_PLAN = "_rejected.parquet"
+# M0b dossier D-18(a): one run at a time. A lock older than twice the cloud job's 60-minute limit
+# (deploy.yml) belongs to a run that died
+RUN_LOCK = "run.lock"
+STALE_LOCK = dt.timedelta(hours=2)
+# M0b dossier D-18(d): the one archive that holds every match, so the only one that shows a match gone
+ALL_JSON = "all_json"
 
 Member = tuple[str, str, bytes]  # (match_id, sha256, raw_bytes), as archive.iter_changed yields
 
@@ -46,6 +53,45 @@ def _utc_now() -> dt.datetime:
 
 def _report_path(settings: Settings, version: str) -> Path:
     return settings.runs_dir / f"{version}.json"
+
+
+def _lock_holder(lock: Path) -> tuple[str, dt.datetime]:
+    """The version and start time a run wrote into the lock; a run killed before writing them leaves
+    an empty lock, which ages by its file time instead."""
+    try:
+        held = json.loads(lock.read_text(encoding="utf-8"))
+        return held["version"], dt.datetime.fromisoformat(held["started"])
+    except ValueError:
+        return "unknown", dt.datetime.fromtimestamp(lock.stat().st_mtime, dt.UTC)
+
+
+@contextmanager
+def _run_lock(settings: Settings) -> Iterator[dt.datetime]:
+    """M0b dossier D-18(a): hold <data_dir>/run.lock for the whole run; yields the run's start time."""
+    started = _utc_now()
+    version = started.strftime(VERSION_FORMAT)
+    lock = settings.data_dir / RUN_LOCK
+    while True:
+        try:
+            with lock.open("x", encoding="utf-8") as f:  # O_CREAT | O_EXCL: one run creates it
+                json.dump({"version": version, "started": started.isoformat()}, f)
+            break
+        except FileExistsError:
+            held_by, held_since = _lock_holder(lock)
+        if started - held_since < STALE_LOCK:
+            console.print(
+                f"[bold red]another run is in progress: {held_by}, started "
+                f"{held_since.isoformat()}[/bold red]",
+                soft_wrap=True,
+            )
+            raise typer.Exit(1)
+        # A dead run's lock is taken over; one another run re-creates meanwhile is fresh and refuses
+        logger.warning("run_lock_taken_over", version=held_by, started=held_since.isoformat())
+        lock.unlink(missing_ok=True)
+    try:
+        yield started
+    finally:
+        lock.unlink(missing_ok=True)  # on success and on failure
 
 
 def _iter_changed_dir(
@@ -71,7 +117,8 @@ def _recover_staging(settings: Settings) -> None:
     for leftover in sorted(p for p in root.iterdir() if p.is_dir()):
         marker = leftover / PARSED_MARKER
         if not marker.exists():
-            # M0b dossier D-12(c): without the marker the parse never finished; Silver was not touched
+            # M0b dossier D-12(c): without the marker the parse never finished; Silver was not touched.
+            # D-18(b): or the manifest was saved and staging was going; nothing is left to finish
             logger.warning("staging_deleted", staging=str(leftover))
             shutil.rmtree(leftover)
             continue
@@ -104,8 +151,9 @@ def _apply(
 ) -> pl.DataFrame:
     """Write a parsed run into the error table, Silver and the manifest; return the error table.
 
-    M0b dossier D-17(f): every write before the merge is replayed from the marker after a crash, and the
-    merge deletes the marker last, so a removal is finished by the next run as a merge is (D-12c).
+    M0b dossier D-17(f), D-18(b): every write is replayed from the marker after a crash, and staging, the
+    marker with it, goes only after the manifest is saved, so the next run finishes a crashed removal or
+    merge (D-12c).
     """
     data_dir = settings.data_dir
     table = quarantine.upsert(quarantine.load(data_dir), rejected_rows)
@@ -120,10 +168,12 @@ def _apply(
         manifest_df = manifest.drop(manifest_df, removed)
         manifest.save(data_dir, manifest_df)
     if manifest_rows:
-        silver.merge(settings.silver_dir, staging)  # step 6; deletes staging and its marker
+        silver.merge(settings.silver_dir, staging)  # step 6
         manifest.save(data_dir, manifest.upsert(manifest_df, manifest_rows))  # step 7
-    elif staging.exists():
-        shutil.rmtree(staging)  # nothing was staged: the marker goes once the removal is written
+    # M0b dossier D-18(b): staging goes once the manifest is saved, its marker first, so a crash while it
+    # goes leaves a folder without a marker, which the next run deletes
+    (staging / PARSED_MARKER).unlink()
+    shutil.rmtree(staging)
     return table
 
 
@@ -151,13 +201,18 @@ def _up_to_date(
 
 def _pipeline(
     settings: Settings,
+    started: dt.datetime,
     source: str,
     reparse_all: bool,
     get_registers: Callable[[dt.date], tuple[Path, Path]],
     get_members: Callable[[dt.date, pl.DataFrame, pl.DataFrame], Iterable[Member]],
+    archive_ids: set[str] | None = None,
 ) -> LatestInfo | None:
-    """M0b dossier §5.1 steps 1-11; returns what LATEST.json now names, or None when up to date."""
-    started = _utc_now()
+    """M0b dossier §5.1 steps 1-11; returns what LATEST.json now names, or None when up to date.
+
+    `started` is the run lock's start time. `archive_ids` fills with the full archive's member ids as
+    get_members reads them (D-18d); None when the source is not the full archive.
+    """
     version = started.strftime(VERSION_FORMAT)  # step 1
     # M0b dossier D-12(d): a second run of the same version is refused before step 2
     for existing in (
@@ -190,9 +245,16 @@ def _pipeline(
     if state.changed_ids or rejected:
         _write_marker(staging, state.manifest_rows, rejected)
     removals = sum(r["action"] == quarantine.REMOVED for r in rejected)
+    # M0b dossier D-18(d), §5.3: the manifest's matches the full archive no longer holds are named and
+    # kept (never delete); a person decides. Logged too, since an up-to-date run writes no report
+    absent = None if archive_ids is None else sorted(set(manifest_df["match_id"]) - archive_ids)
+    if absent:
+        logger.warning("absent_from_archive", match_ids=absent)
     console.print(
         f"Changed: [cyan]{state.files_seen}[/cyan], parsed: [cyan]{len(state.changed_ids)}[/cyan], "
         f"quarantined: [cyan]{len(state.quarantined)}[/cyan], removed: [cyan]{removals}[/cyan]"
+        + ("" if absent is None else f", absent from archive: [cyan]{len(absent)}[/cyan]"),
+        soft_wrap=True,
     )
 
     previous = read_latest(settings.data_dir)
@@ -250,6 +312,8 @@ def _pipeline(
         "snapshot": info.model_dump(mode="json"),
         "pruned": [p.relative_to(settings.data_dir).as_posix() for p in pruned],
     }
+    if absent is not None:
+        report["absent_from_archive"] = absent  # M0b dossier D-18(d): only the full archive's runs
     path = _report_path(settings, version)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -300,15 +364,17 @@ def ingest_local(
         raise typer.Exit(1)
     settings = get_settings()
     settings.ensure_directories()  # M0b dossier D-14a: the run makes its folders, get_settings() does not
-    _pipeline(
-        settings,
-        source=str(matches_dir),
-        reparse_all=False,
-        get_registers=lambda day: (people_csv, names_csv),
-        get_members=lambda day, manifest_df, quarantine_df: _iter_changed_dir(
-            matches_dir, manifest_df, quarantine_df
-        ),
-    )
+    with _run_lock(settings) as started:  # M0b dossier D-18(a): before anything else
+        _pipeline(
+            settings,
+            started,
+            source=str(matches_dir),
+            reparse_all=False,
+            get_registers=lambda day: (people_csv, names_csv),
+            get_members=lambda day, manifest_df, quarantine_df: _iter_changed_dir(
+                matches_dir, manifest_df, quarantine_df
+            ),
+        )
 
 
 @app.command()
@@ -331,20 +397,26 @@ def run(
     settings = get_settings()
     settings.ensure_directories()  # M0b dossier D-14a: the run makes its folders, get_settings() does not
     archive = archive or settings.nightly_archive  # M0b dossier D-2
-    _pipeline(
-        settings,
-        source=archive,
-        reparse_all=reparse_all,
-        get_registers=RegisterDownloader(settings=settings).download_registers_to_bronze,
-        get_members=lambda day, manifest_df, quarantine_df: iter_changed(
-            MatchDownloader(settings=settings).download_to_bronze(archive, day),
-            manifest_df,
-            PARSER_VERSION,
-            reparse_all,
-            quarantine_df,
-        ),
-    )
-    _roll_out(settings)  # a failed gate raised above and never gets here
+    # M0b dossier D-18(d): only the full archive's member ids can show a match gone
+    archive_ids: set[str] | None = set() if archive == ALL_JSON else None
+    with _run_lock(settings) as started:  # M0b dossier D-18(a): before anything else
+        _pipeline(
+            settings,
+            started,
+            source=archive,
+            reparse_all=reparse_all,
+            get_registers=RegisterDownloader(settings=settings).download_registers_to_bronze,
+            get_members=lambda day, manifest_df, quarantine_df: iter_changed(
+                MatchDownloader(settings=settings).download_to_bronze(archive, day),
+                manifest_df,
+                PARSER_VERSION,
+                reparse_all,
+                quarantine_df,
+                archive_ids,
+            ),
+            archive_ids=archive_ids,
+        )
+        _roll_out(settings)  # a failed gate raised above and never gets here
 
 
 @app.command()

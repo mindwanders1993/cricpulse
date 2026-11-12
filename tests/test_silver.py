@@ -58,7 +58,9 @@ def test_first_run_is_staging_only(tmp_path: Path):
     for table in silver.TABLES:
         assert _row_hashes(_read(silver_dir, table)) == _row_hashes(staged[table])
     assert sorted(_read(silver_dir, "matches")["match_id"]) == ["1001", "1002"]
-    assert not staging.exists()
+    # M0b dossier D-18(b): the merge leaves staging; test_pipeline checks the run deletes it after
+    # the manifest is saved
+    assert staging.exists()
     assert not list(silver_dir.glob("*.tmp"))
 
 

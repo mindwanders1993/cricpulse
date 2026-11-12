@@ -1,6 +1,5 @@
 """Silver merge: replace re-parsed matches, keep every other row exactly as it was (M0b dossier §5.4)."""
 
-import shutil
 from pathlib import Path
 
 import duckdb
@@ -88,8 +87,7 @@ def merge(silver_dir: Path, staging_dir: Path) -> dict[str, int]:
 
     for tmp, final in written:
         tmp.replace(final)
-    # Staging goes only after every table is in place, so a crash mid-rename can be re-run
-    shutil.rmtree(staging_dir)
+    # M0b dossier D-18(b): staging stays; the run deletes it once the manifest is saved
     logger.info("silver_merged", rows=counts, matches=expected_matches)
     return counts
 

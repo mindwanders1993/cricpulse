@@ -201,3 +201,33 @@ def test_the_sha_of_each_rejected_file_is_recorded(tmp_path: Path):
 
     assert [m for m, _ in state.quarantined] == ["1003"]  # the (match_id, error) shape is kept
     assert state.quarantined_sha256 == {"1003": compute_bytes_sha256(b"{not json")}
+
+
+# --- M0b dossier D-18: the absence log and a passing failure ---------------------------------
+
+
+def test_member_ids_receives_every_json_member_changed_or_not(tmp_path: Path):
+    members = {"1001.json": T20, "1002.json": TEST, "1003.json": b"{not json", "README.txt": b"x"}
+    zp = _zip(tmp_path / "a.zip", members)
+    held = _held("1003", b"{not json")
+    member_ids: set[str] = set()
+
+    items = archive.iter_changed(zp, _current("1001", T20), PARSER_VERSION, False, held, member_ids)
+
+    assert [m for m, _, _ in items] == ["1002"]  # 1001 is current, 1003 is held
+    assert member_ids == {"1001", "1002", "1003"}  # D-18(d): every member, changed or not
+
+
+@pytest.mark.parametrize("error", [MemoryError("out of memory"), OSError("disk went away")])
+def test_a_memory_or_os_error_stops_the_parse_instead_of_quarantining(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+):
+    def parse_json(self, match_id, data):
+        raise error
+
+    monkeypatch.setattr(MatchParser, "parse_json", parse_json)
+    zp = _zip(tmp_path / "a.zip", {"1001.json": T20})
+    items = archive.iter_changed(zp, _empty_manifest(), PARSER_VERSION, reparse_all=False)
+
+    with pytest.raises(type(error), match=str(error)):
+        archive.parse_to_staging(items, tmp_path / "_staging" / "v1")
