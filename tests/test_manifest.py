@@ -83,3 +83,10 @@ def test_save_leaves_no_tmp(temp_dir: Path):
     manifest.save(temp_dir, manifest.upsert(df, [_row("2")]))
     assert sorted(p.name for p in (temp_dir / "silver").iterdir()) == ["manifest.parquet"]
     assert manifest.load(temp_dir).height == 2
+
+
+def test_drop_removes_the_rows_of_removed_matches():
+    # M0b dossier D-17(a): a match removed from Silver loses its manifest row
+    df = manifest.upsert(pl.DataFrame(schema=manifest.SCHEMA), [_row("1"), _row("2"), _row("3")])
+    assert sorted(manifest.drop(df, ["1", "3", "9"])["match_id"]) == ["2"]
+    assert manifest.drop(df, []).equals(df)

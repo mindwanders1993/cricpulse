@@ -15,7 +15,8 @@ from click.testing import Result
 from typer.testing import CliRunner
 
 from src.config import Settings
-from src.publisher import main, silver
+from src.parsers.match_parser import MatchParser
+from src.publisher import archive, main, manifest, quarantine, silver
 from src.publisher.archive import parse_to_staging
 from src.publisher.bench import Timing, verdict
 from src.publisher.quality_gates import QualityGateFailure
@@ -349,6 +350,360 @@ def test_a_second_run_in_the_same_minute_is_refused_with_nothing_written(
     assert site.calls == []  # refused before step 2: nothing downloaded
 
 
+# --- M0b dossier D-17: a match a newer parser rejects leaves the app; the error table --------
+
+REAL_PARSE_JSON = MatchParser.parse_json
+
+
+def _one_ball(raw: bytes) -> bytes:
+    """The T20 cut to its first ball: removing it drops 1 of 1,604 deliveries, inside the 0.999 gate."""
+    data = orjson.loads(raw)
+    first = data["innings"][0]
+    first["overs"] = [{**first["overs"][0], "deliveries": first["overs"][0]["deliveries"][:1]}]
+    data["innings"] = [first]
+    return orjson.dumps(data)
+
+
+ONE_BALL = _one_ball(T20)
+WORLD = {**BOTH, "9001.json": ONE_BALL}
+
+
+def _parser(monkeypatch: pytest.MonkeyPatch, version: int, *rejected: str) -> None:
+    """A parser change (M0b dossier D-17g): PARSER_VERSION is `version` and it rejects `rejected`."""
+
+    def parse_json(self, match_id, data):
+        if match_id in rejected:
+            raise ValueError(f"rejected by parser {version}: {match_id}")
+        return REAL_PARSE_JSON(self, match_id, data)
+
+    monkeypatch.setattr(MatchParser, "parse_json", parse_json)
+    for module in (main, archive):
+        monkeypatch.setattr(module, "PARSER_VERSION", version)
+
+
+def _both_teams(raw: bytes) -> bytes:
+    """A new revision that lists one player for both teams, which the parser rejects (D-16c)."""
+    data = orjson.loads(raw)
+    first, second = data["info"]["teams"]
+    data["info"]["players"][second].append(data["info"]["players"][first][0])
+    data["meta"]["revision"] += 1
+    return orjson.dumps(data)
+
+
+def _silver_ids(settings: Settings, table: str) -> set[str]:
+    return set(pl.read_parquet(settings.silver_dir / f"{table}.parquet")["match_id"])
+
+
+def _manifest_ids(settings: Settings) -> set[str]:
+    return set(manifest.load(settings.data_dir)["match_id"])
+
+
+def _error_table(settings: Settings) -> dict[str, dict]:
+    return {r["match_id"]: r for r in quarantine.load(settings.data_dir).iter_rows(named=True)}
+
+
+def _remove_9001(monkeypatch: pytest.MonkeyPatch, settings: Settings, site: Cricsheet) -> Result:
+    """Run 1 publishes WORLD; run 2, on parser 2, rejects the unchanged 9001 and removes it."""
+    site.serve(WORLD)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    _parser(monkeypatch, 2, "9001")
+    result = _cli(monkeypatch, 2, "run")
+    assert result.exit_code == 0, result.output
+    return result
+
+
+def test_an_unchanged_file_a_newer_parser_rejects_leaves_the_app(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    result = _remove_9001(monkeypatch, settings, site)
+
+    assert "quarantined: 1, removed: 1" in result.output
+    for table in silver.TABLES:
+        assert "9001" not in _silver_ids(settings, table), table
+    assert _manifest_ids(settings) == {"1001", "1002"}
+    info = read_latest(settings.data_dir)
+    assert (info.version, info.match_count) == (_version(2), 2)
+    assert _ids(settings) == ["1001", "1002"]
+    row = _error_table(settings)["9001"]
+    assert row == {
+        "match_id": "9001",
+        "file_sha256": compute_bytes_sha256(ONE_BALL),
+        "parser_version": 2,
+        "error": "ValueError: rejected by parser 2: 9001",
+        "action": "removed",
+        "version": _version(2),
+    }
+    assert _report(settings, 2)["quarantined"] == [row]
+
+
+def test_a_rejected_new_revision_keeps_the_last_good_rows(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    first = read_latest(settings.data_dir)
+    manifest_before = manifest.load(settings.data_dir)
+    revision = _both_teams(T20)
+    site.serve({"1001.json": revision, "1002.json": TEST})
+
+    result = _cli(monkeypatch, 2, "run")
+
+    assert result.exit_code == 0, result.output
+    assert "quarantined: 1, removed: 0" in result.output
+    info = read_latest(settings.data_dir)
+    assert (info.version, info.match_count) == (_version(2), 2)
+    assert info.delivery_count == first.delivery_count
+    assert _query(settings, "SELECT city FROM gold.dim_match WHERE match_id = '1001'") == [
+        ("Morrisville",)
+    ]
+    assert manifest.load(settings.data_dir).equals(manifest_before)
+    row = _error_table(settings)["1001"]
+    assert (row["action"], row["file_sha256"], row["version"]) == (
+        "kept_last_good",
+        compute_bytes_sha256(revision),
+        _version(2),
+    )
+    assert row["error"] == "ValueError: player listed for both teams: Q de Kock"
+    assert _report(settings, 2)["quarantined"] == [row]
+
+
+def test_a_rejected_new_id_is_not_loaded(monkeypatch, settings: Settings, site: Cricsheet):
+    site.serve({**BOTH, "1003.json": b"not json"})
+
+    result = _cli(monkeypatch, 1, "run")
+
+    assert result.exit_code == 0, result.output
+    assert _ids(settings) == ["1001", "1002"]
+    assert _manifest_ids(settings) == {"1001", "1002"}
+    row = _error_table(settings)["1003"]
+    assert (row["action"], row["file_sha256"], row["version"]) == (
+        "not_loaded",
+        compute_bytes_sha256(b"not json"),
+        _version(1),
+    )
+    assert _report(settings, 1)["quarantined"] == [row]
+
+
+def test_a_second_run_with_the_same_rejected_file_stops_up_to_date(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    _remove_9001(monkeypatch, settings, site)
+    latest_before = latest_path(settings.data_dir).read_bytes()
+    table_before = quarantine.quarantine_path(settings.data_dir).read_bytes()
+
+    result = _cli(monkeypatch, 3, "run")
+
+    assert result.exit_code == 0, result.output
+    assert "Up to date" in result.output
+    assert "Changed: 0" in result.output  # 9001 is skipped while the error table holds it
+    assert latest_path(settings.data_dir).read_bytes() == latest_before
+    assert quarantine.quarantine_path(settings.data_dir).read_bytes() == table_before
+    assert not (settings.runs_dir / f"{_version(3)}.json").exists()
+
+
+def test_a_file_that_later_parses_cleanly_leaves_the_table_and_is_back_in_gold(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    _remove_9001(monkeypatch, settings, site)
+    _parser(monkeypatch, 3)  # the parser fix: version 3 accepts 9001 again
+
+    result = _cli(monkeypatch, 3, "run")
+
+    assert result.exit_code == 0, result.output
+    info = read_latest(settings.data_dir)
+    assert (info.version, info.match_count) == (_version(3), 3)
+    assert _ids(settings) == ["1001", "1002", "9001"]
+    assert _error_table(settings) == {}
+    assert _report(settings, 3)["quarantined"] == []
+    assert manifest.load(settings.data_dir).filter(pl.col("match_id") == "9001")[
+        "parser_version"
+    ].to_list() == [3]
+
+
+def test_a_retry_after_a_gate_failure_that_followed_a_removal_passes_never_shrinks_matches(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(WORLD)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    real_gates = main.run_quality_gates
+
+    def failing_gates(con, **kwargs):
+        raise QualityGateFailure("[forced] gate forced to fail")
+
+    monkeypatch.setattr(main, "run_quality_gates", failing_gates)
+    _parser(monkeypatch, 2, "9001")
+    # Only 9001 is served, so the error-table row alone is newer than LATEST.json (D-17e)
+    site.serve({"9001.json": ONE_BALL})
+    assert _cli(monkeypatch, 2, "run").exit_code != 0  # 9001 left Silver; nothing was published
+    assert read_latest(settings.data_dir).version == _version(1)
+    assert manifest.load(settings.data_dir).filter(pl.col("version") > _version(1)).is_empty()
+    seen: list[dict] = []
+
+    def recording_gates(con, **kwargs):
+        results = real_gates(con, **kwargs)
+        seen.extend(results)
+        return results
+
+    monkeypatch.setattr(main, "run_quality_gates", recording_gates)
+
+    result = _cli(monkeypatch, 3, "run")
+
+    assert result.exit_code == 0, result.output
+    assert _report(settings, 3)["files_seen"] == 0  # 9001 is held, yet its removal still counts
+    gate = next(r for r in seen if r["check"] == "never_shrinks_matches")
+    assert gate == {"check": "never_shrinks_matches", "passed": True, "value": 2, "removed": 1}
+    assert read_latest(settings.data_dir).match_count == 2
+
+
+def test_once_a_removal_is_live_any_other_drop_still_fails_never_shrinks_matches(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    _remove_9001(monkeypatch, settings, site)
+    latest_before = latest_path(settings.data_dir).read_bytes()
+    silver.remove(settings.silver_dir, ["1001"])  # a loss the error table knows nothing about
+    site.files["/register/people.csv"] = PEOPLE + b"aaaa0001,New Player,N Player,,,\n"
+
+    result = _cli(monkeypatch, 3, "run")
+
+    assert isinstance(result.exception, QualityGateFailure)
+    assert "[never_shrinks_matches] Fewer matches than live snapshot" in str(result.exception)
+    assert "less 0 removed" in str(result.exception)  # 9001's removal is already in LATEST.json
+    assert latest_path(settings.data_dir).read_bytes() == latest_before
+
+
+def test_a_crash_between_the_silver_removal_and_the_manifest_write_is_finished_by_the_next_run(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(WORLD)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    _parser(monkeypatch, 2, "9001")
+    site.serve({"9001.json": ONE_BALL})  # nothing parses, so nothing is staged but the plan
+    real_remove = silver.remove
+
+    def remove_then_crash(*args, **kwargs):
+        real_remove(*args, **kwargs)
+        raise RuntimeError("the job died before the manifest write")
+
+    monkeypatch.setattr(silver, "remove", remove_then_crash)
+    assert _cli(monkeypatch, 2, "run").exit_code != 0
+    leftover = settings.silver_dir / "_staging" / _version(2)
+    assert (leftover / main.PARSED_MARKER).exists()
+    assert "9001" not in _silver_ids(settings, "matches")
+    assert "9001" in _manifest_ids(settings)  # the half-done removal
+    monkeypatch.setattr(silver, "remove", real_remove)
+
+    result = _cli(monkeypatch, 3, "run")
+
+    assert result.exit_code == 0, result.output
+    assert not leftover.exists()
+    assert _manifest_ids(settings) == {"1001", "1002"}
+    for table in silver.TABLES:
+        assert "9001" not in _silver_ids(settings, table), table
+    info = read_latest(settings.data_dir)
+    assert (info.version, info.match_count) == (_version(3), 2)
+    assert _ids(settings) == ["1001", "1002"]
+    row = _error_table(settings)["9001"]
+    assert (row["action"], row["version"]) == ("removed", _version(2))
+
+
+def test_reparse_all_retries_rejected_files(monkeypatch, settings: Settings, site: Cricsheet):
+    _parser(monkeypatch, 1, "9001")  # this parser rejects 9001 from the first run
+    site.serve(WORLD)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    assert _error_table(settings)["9001"]["action"] == "not_loaded"
+    assert "Up to date" in _cli(monkeypatch, 2, "run").output  # held, so skipped (D-17d)
+    _parser(monkeypatch, 1)  # fixed with the same PARSER_VERSION: only --reparse-all reads it again
+
+    result = _cli(monkeypatch, 3, "run", "--reparse-all")
+
+    assert result.exit_code == 0, result.output
+    assert _report(settings, 3)["files_seen"] == 3
+    assert _ids(settings) == ["1001", "1002", "9001"]
+    assert _error_table(settings) == {}
+
+
+# --- M0b dossier D-17(h): a rejected file counts toward quarantine_bounded until a run publishes
+
+SIX_BROKEN = {f"bad{i}.json": b"not json" for i in range(6)}  # 6 > max(5, 1%): D-5
+
+
+def _six_broken_twice(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings, site: Cricsheet
+) -> tuple[bytes, dict[str, bytes]]:
+    """Run 1 publishes BOTH; runs 2 and 3 serve six broken new files beside it and both fail.
+
+    Returns LATEST.json and the snapshots tree as run 1 left them."""
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    before = (latest_path(settings.data_dir).read_bytes(), _tree(settings.snapshots_dir))
+    site.serve({**BOTH, **SIX_BROKEN})
+    for minute in (2, 3):
+        result = _cli(monkeypatch, minute, "run")
+        assert isinstance(result.exception, QualityGateFailure), result.output
+        assert "[quarantine_bounded] 6 of 6 files quarantined, limit 5" in str(result.exception)
+    return before
+
+
+def test_a_retry_after_a_quarantine_bounded_failure_fails_it_again(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    latest_before, snapshots_before = _six_broken_twice(monkeypatch, settings, site)
+
+    assert latest_path(settings.data_dir).read_bytes() == latest_before
+    assert _tree(settings.snapshots_dir) == snapshots_before  # nothing published
+    for minute in (2, 3):
+        assert not (settings.runs_dir / f"{_version(minute)}.json").exists()
+    # Run 3 read none of the six again: they were held (D-17d), and still counted (D-17h)
+    assert {r["version"] for r in _error_table(settings).values()} == {_version(2)}
+
+
+def test_held_rows_stop_counting_once_their_files_parse(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    _six_broken_twice(monkeypatch, settings, site)
+    site.serve({**BOTH, **{name: T20 for name in SIX_BROKEN}})  # Cricsheet's fixed revisions
+
+    result = _cli(monkeypatch, 4, "run")
+
+    assert result.exit_code == 0, result.output
+    assert read_latest(settings.data_dir).match_count == 8
+    assert _error_table(settings) == {}
+
+
+def test_held_rows_stop_counting_once_a_publish_moves_latest_json_past_them(
+    monkeypatch, settings: Settings, site: Cricsheet
+):
+    site.serve(BOTH)
+    assert _cli(monkeypatch, 1, "run").exit_code == 0
+    real_gates = main.run_quality_gates
+    gated: list[tuple[int, int]] = []
+
+    def failing_gates(con, **kwargs):
+        raise QualityGateFailure("[forced] gate forced to fail")
+
+    def recording_gates(con, **kwargs):
+        gated.append((kwargs["quarantined"], kwargs["files_seen"]))
+        return real_gates(con, **kwargs)
+
+    three = {f"bad{i}.json": b"not json" for i in range(3)}
+    monkeypatch.setattr(main, "run_quality_gates", failing_gates)
+    site.serve({**BOTH, **three})
+    assert _cli(monkeypatch, 2, "run").exit_code != 0  # three rows newer than LATEST.json
+    monkeypatch.setattr(main, "run_quality_gates", recording_gates)
+    one = {"new0.json": b"not json"}
+    site.serve({**BOTH, **three, **one})
+    assert _cli(monkeypatch, 3, "run").exit_code == 0  # 1 own + 3 held = 4, within 5: publishes
+    four = {f"late{i}.json": b"not json" for i in range(4)}
+    site.serve({**BOTH, **three, **one, **four})
+
+    result = _cli(monkeypatch, 4, "run")
+
+    # LATEST.json is now run 3, past every older row: only run 4's own four count, not 8
+    assert result.exit_code == 0, result.output
+    assert gated == [(4, 4), (4, 4)]
+    assert read_latest(settings.data_dir).version == _version(4)
+
+
 # --- ingest-local: the same steps on a directory --------------------------------------------
 
 
@@ -378,6 +733,25 @@ def test_ingest_local_runs_the_same_steps_on_a_directory(
     assert second.exit_code == 0, second.output
     assert "Up to date" in second.output
     assert site.calls == []  # a local source downloads nothing
+
+
+def test_ingest_local_skips_a_file_the_error_table_holds(
+    monkeypatch, settings: Settings, site: Cricsheet, tmp_path: Path
+):
+    matches_dir = tmp_path / "matches"
+    matches_dir.mkdir()
+    for name, raw in {**BOTH, "1003.json": b"not json"}.items():
+        (matches_dir / name).write_bytes(raw)
+    argv = ("ingest-local", "-m", str(matches_dir), "-p", str(FIXTURES / "sample_people.csv"))
+    argv += ("-n", str(FIXTURES / "sample_names.csv"))
+
+    first = _cli(monkeypatch, 1, *argv)
+    second = _cli(monkeypatch, 2, *argv)
+
+    assert first.exit_code == 0, first.output
+    assert _error_table(settings)["1003"]["action"] == "not_loaded"
+    assert second.exit_code == 0, second.output
+    assert "Up to date" in second.output  # M0b dossier D-17(d)
 
 
 def test_a_run_on_an_empty_data_dir_creates_what_it_needs(

@@ -18,10 +18,12 @@ def run_quality_gates(
     previous: LatestInfo | None = None,
     quarantined: int = 0,
     files_seen: int = 0,
+    removed: int = 0,
 ) -> list[dict[str, Any]]:
     """Execute automated Data Quality assertions against the DuckDB Star Schema.
 
-    `previous` is the live `LATEST.json`; `quarantined` and `files_seen` come from the run state.
+    `previous` is the live `LATEST.json`; `quarantined` and `files_seen` come from the run state;
+    `removed` counts the matches the error table removed from Silver since `previous` (M0b dossier D-17e).
     """
     checks = [
         (
@@ -129,8 +131,10 @@ def run_quality_gates(
             (
                 "never_shrinks_matches",
                 "SELECT COUNT(*) FROM gold.dim_match;",
-                lambda res: res >= previous.match_count,
-                f"Fewer matches than live snapshot {previous.version} ({previous.match_count})",
+                # M0b dossier D-17(e): exactly the removed matches may go; any other drop still fails
+                lambda res: res >= previous.match_count - removed,
+                f"Fewer matches than live snapshot {previous.version} ({previous.match_count}) "
+                f"less {removed} removed",
             ),
             (
                 "never_shrinks_deliveries",
@@ -150,13 +154,14 @@ def run_quality_gates(
             val = raw_res[0] if raw_res and len(raw_res) == 1 else raw_res
             passed = bool(validator(val))
 
-            results.append(
-                {
-                    "check": name,
-                    "passed": passed,
-                    "value": val,
-                }
-            )
+            result = {
+                "check": name,
+                "passed": passed,
+                "value": val,
+            }
+            if name == "never_shrinks_matches":
+                result["removed"] = removed  # M0b.13 card: the gate's result names `removed`
+            results.append(result)
 
             if not passed:
                 logger.error("quality_gate_failed", check=name, value=val, message=error_msg)

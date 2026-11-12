@@ -9,7 +9,7 @@ import orjson
 import polars as pl
 
 from src.parsers.match_parser import PARSER_VERSION, MatchParser
-from src.publisher import manifest
+from src.publisher import manifest, quarantine
 from src.utils import compute_bytes_sha256, setup_logging
 
 logger = setup_logging()
@@ -20,13 +20,22 @@ class RunState:
     changed_ids: list[str] = field(default_factory=list)
     manifest_rows: list[dict] = field(default_factory=list)  # shape of manifest.SCHEMA, for upsert
     quarantined: list[tuple[str, str]] = field(default_factory=list)  # (match_id, error)
+    # M0b dossier D-17(c): the error table holds each rejected file by its sha
+    quarantined_sha256: dict[str, str] = field(default_factory=dict)  # match_id → sha256
     files_seen: int = 0  # items handed to parse_to_staging
 
 
 def iter_changed(
-    zip_path: Path, manifest_df: pl.DataFrame, parser_version: int, reparse_all: bool
+    zip_path: Path,
+    manifest_df: pl.DataFrame,
+    parser_version: int,
+    reparse_all: bool,
+    quarantine_df: pl.DataFrame | None = None,
 ) -> Iterator[tuple[str, str, bytes]]:
-    """Yield (match_id, sha256, raw_bytes) for .json members that are new or changed; no extraction."""
+    """Yield (match_id, sha256, raw_bytes) for .json members that are new or changed; no extraction.
+
+    A member the error table `quarantine_df` holds is skipped, unless `reparse_all` (M0b dossier D-17d).
+    """
     seen: set[str] = set()
     with zipfile.ZipFile(zip_path) as zf:
         for member in zf.infolist():
@@ -40,6 +49,12 @@ def iter_changed(
             raw = zf.read(member)
             sha = compute_bytes_sha256(raw)
             if not reparse_all and manifest.is_current(manifest_df, match_id, sha, parser_version):
+                continue
+            if (
+                not reparse_all
+                and quarantine_df is not None
+                and quarantine.is_held(quarantine_df, match_id, sha, parser_version)
+            ):
                 continue
             yield match_id, sha, raw
 
@@ -76,6 +91,7 @@ def parse_to_staging(
             error = f"{type(exc).__name__}: {exc}"
             logger.warning("match_quarantined", match_id=match_id, error=error)
             state.quarantined.append((match_id, error))
+            state.quarantined_sha256[match_id] = sha
             continue
         batch.append(dfs)
         state.changed_ids.append(match_id)

@@ -1,0 +1,61 @@
+# Handoff: M0b.13 (A)
+- Branch / checkout: `feat/M0b-trustworthy-data-pipeline`, main checkout `/Users/mrrobot/Desktop/Projects/cricpulse` (`git rev-parse --show-toplevel` printed exactly that path before any work)
+- State: done
+- Colour: 🔴 (`src/publisher/` is a red zone)
+- What changed:
+  - `src/publisher/quarantine.py` (new): the error table `silver/quarantine.parquet`. It has `load` (empty when missing), `upsert`, `drop`, `save` (`*.tmp` then rename), plus `is_held` (D-17d), `classify` against the manifest (D-17a, b), `removed_since` (D-17e) and `held_since` (D-17h). Its columns are `match_id`, `file_sha256`, `parser_version`, `error`, `action`, `version`. A `removed` row keeps its action and version until its file parses cleanly.
+  - `src/publisher/archive.py`: `RunState.quarantined_sha256` (match id → sha) sits beside the unchanged `(match_id, error)` list. `iter_changed` takes an optional fifth argument, `quarantine_df`, and skips held files unless `reparse_all`. Callers that pass four arguments work as before.
+  - `src/publisher/silver.py`: `remove(silver_dir, match_ids)` drops those ids from all five tables by `*.tmp` then rename. It checks the match count fell by exactly the ids still there and fails loudly otherwise. It needs no staging.
+  - `src/publisher/manifest.py`: `drop(df, match_ids)`.
+  - `src/publisher/quality_gates.py`: `run_quality_gates(..., removed=0)`. `never_shrinks_matches` passes when `count ≥ previous − removed`, and its result carries `"removed"`. The deliveries gate is unchanged.
+  - `src/publisher/main.py`:
+    - Each rejected file is classified against the manifest.
+    - The marker is written whenever anything parsed or was rejected. The plan `_rejected.parquet` is written first, beside the `_parsed.parquet` marker.
+    - The new `_apply` runs in this order: error table, Silver removal, manifest drop, merge (which deletes staging and the marker), manifest upsert. Everything before the merge is replayed from the marker after a crash.
+    - "Up to date" also needs no error-table row newer than `LATEST.json`.
+    - The gate gets `removed`. Each report `quarantined` entry is the full error-table row, `action` included. The console line now ends `removed: N`. `_iter_changed_dir` skips held files.
+    - **Correction, D-17(h) (governor ruling, option (c)):** `quarantine_bounded` now gets the run's own rejections plus `held`, and `files_seen` gets `+ held` for the limit. `held` counts the error table's rows newer than `LATEST.json`'s version whose ids this run did not read again. With no `LATEST.json`, `held` is 0. `quality_gates.py` is unchanged for this; its signature stays as dossier §5.6 gives it. The run report still shows the run's own `files_seen`.
+  - `tests/test_quarantine.py` (new): 10 tests of the error table (one is `held_since`, for D-17h).
+  - `tests/test_archive.py`: 3 tests (held skip, re-read on a new sha / newer parser / `reparse_all`, sha recorded).
+  - `tests/test_silver.py`: 4 tests of `remove`.
+  - `tests/test_manifest.py`: 1 test of `drop`.
+  - `tests/test_quality_gates.py`: 3 tests of the gate with `removed`.
+  - `tests/test_pipeline.py`: 13 run tests: the card's 9 lines, ingest-local, and 3 for the D-17(h) correction. Fixtures are made in the test: a one-ball cut of the T20, and a T20 revision that lists Q de Kock for both teams (D-16c). No new fixture files.
+  - Existing tests: none changed, skipped or deleted. Only two import lines were widened.
+- Verification run: `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_quarantine.py tests/test_archive.py tests/test_silver.py tests/test_manifest.py tests/test_quality_gates.py tests/test_pipeline.py -q && python -m pytest -q`
+  - ruff: "All checks passed!", "61 files already formatted"
+  - Card slice: 98 passed
+  - Full suite: 180 passed, 2 skipped (the live cricsheet.org tests, skipped as before), 1 warning (starlette, as before)
+  - Exit code: 0, on the run after the D-17(h) correction, the last code change. The baseline before the work was 146 passed, 2 skipped. The first build was 176 passed, 2 skipped.
+  - Mutation check (scratch only, every file restored byte for byte): I broke each rule in turn and a named test failed every time.
+    - First build, 9 rules: removal, the up-to-date rule, `removed_since`, the gate allowance, the held skip in the zip reader and in the dir reader, the clean-file drop, plan replay, and the removed-keeps rule.
+    - Correction, 4 more: `held` never counted, `held` not added to `files_seen`, no `LATEST.json` boundary, and re-read ids not excluded (which would count the run's own rejections twice).
+  - `git status --short`: `M` on `src/publisher/{archive,main,manifest,quality_gates,silver}.py` and `tests/test_{archive,manifest,pipeline,quality_gates,silver}.py`. `??` on `src/publisher/quarantine.py`, `tests/test_quarantine.py` and this note. `??` on the owner's `08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md`, left alone as the card asks. `M` on `docs/features/M0B-TASK-CARDS.md` and `docs/features/M0B-TRUSTWORTHY-DATA-PIPELINE.md`: the governor's D-17(h) and doc updates, not this build's. I did not touch them.
+- Done-when lines met:
+  - (a) same file, newer parser → removed from every Silver table and the manifest, Gold lacks it, run publishes. Met: `test_pipeline.py::test_an_unchanged_file_a_newer_parser_rejects_leaves_the_app`, `test_silver.py::test_remove_drops_the_ids_from_every_table_with_nothing_staged`, `test_manifest.py::test_drop_removes_the_rows_of_removed_matches`
+  - (b) rejected new revision → last good rows kept, `kept_last_good`. Met: `test_pipeline.py::test_a_rejected_new_revision_keeps_the_last_good_rows`
+  - (c) the error table and the report. Met: `test_pipeline.py::test_a_rejected_new_id_is_not_loaded`, `test_pipeline.py::test_a_file_that_later_parses_cleanly_leaves_the_table_and_is_back_in_gold`, `test_archive.py::test_the_sha_of_each_rejected_file_is_recorded`, and all 9 tests in `test_quarantine.py`
+  - (d) held files skipped, `--reparse-all` retries them. Met: `test_pipeline.py::test_a_second_run_with_the_same_rejected_file_stops_up_to_date`, `test_pipeline.py::test_reparse_all_retries_rejected_files`, `test_pipeline.py::test_ingest_local_skips_a_file_the_error_table_holds`, `test_archive.py::test_a_member_the_error_table_holds_is_skipped`, `test_archive.py::test_a_held_member_is_read_again_on_a_new_sha_a_newer_parser_or_reparse_all`
+  - (e) gate allows exactly the removed matches; any other drop fails; deliveries gate unchanged; "up to date" rule. Met: `test_pipeline.py::test_a_retry_after_a_gate_failure_that_followed_a_removal_passes_never_shrinks_matches` (in that test only the error-table row is newer than `LATEST.json`), `test_pipeline.py::test_once_a_removal_is_live_any_other_drop_still_fails_never_shrinks_matches`, `test_quality_gates.py::test_never_shrinks_matches_allows_exactly_the_removed_matches`, `test_quality_gates.py::test_never_shrinks_matches_fails_on_any_other_drop`, `test_quality_gates.py::test_removed_leaves_the_deliveries_gate_unchanged`, `test_quarantine.py::test_removed_since_counts_removed_rows_newer_than_the_live_version`
+  - (f) crash-safe removal. Met: `test_pipeline.py::test_a_crash_between_the_silver_removal_and_the_manifest_write_is_finished_by_the_next_run` (the crashed run parsed nothing, so the marker was written with only the plan), `test_silver.py::test_exception_between_remove_write_and_rename_leaves_silver_unchanged`, `test_silver.py::test_remove_rerun_after_a_crash_mid_rename_finishes_the_rest`, `test_silver.py::test_remove_fails_loudly_when_the_count_does_not_fall_by_the_ids`
+  - (h) a rejected file counts toward `quarantine_bounded` until a run publishes. Met:
+    - `test_pipeline.py::test_a_retry_after_a_quarantine_bounded_failure_fails_it_again`: the 6-broken-files run, then a retry on the same archive. Both fail `[quarantine_bounded] 6 of 6 files quarantined, limit 5`, `LATEST.json` and the snapshots stay byte-identical, and neither run writes a report.
+    - `test_pipeline.py::test_held_rows_stop_counting_once_their_files_parse`: the fixed files parse, their rows leave the table, and the run publishes 8 matches.
+    - `test_pipeline.py::test_held_rows_stop_counting_once_a_publish_moves_latest_json_past_them`: the gate gets 1 own + 3 held = 4 and publishes; on the next run only its own 4 count, not 8.
+    - `test_quarantine.py::test_held_since_counts_rows_newer_than_the_live_version_the_run_did_not_read`
+  - (g) `PARSER_VERSION` stays 1. Met: `src/parsers/match_parser.py` is untouched; tests monkeypatch it.
+  - The full suite passes: met (180 passed, 2 skipped).
+  - No test reads or writes `data/`: met. Every new test uses `tmp_path`/`temp_dir`, and `git status` shows nothing under `data/`.
+- Proof: output only (the Kaizen card's Proof is "none, output only"; no screen changed)
+  - A match that a newer parser turns down now leaves the app on the next run. Every turned-down file goes into one error table that says what happened to it (removed, kept its last good version, or never loaded), for a person to fix by hand.
+  - Works: yes. The full suite passes (180 passed, 2 skipped). A run with too many bad files now keeps failing on every retry until they are fixed or a run publishes.
+  - Next: a fresh session reviews and lands M0b.13. Then the full build is re-run on the real archive (U-1/U-2).
+- Followed the code, not the card:
+  - `main._iter_changed_dir` has no `--reparse-all`, because `ingest-local` has no such flag. It always skips held files; only `run --reparse-all` retries them.
+  - Placement of the plan (the card said "may travel in that marker"): `silver.merge` deletes the whole staging dir, marker included. So the plan sits in `_rejected.parquet` beside the marker, written before it. Every write that must be replayable comes before the merge. A run that both removes and merges therefore saves the manifest twice: the drop before the merge, the upsert after it (step 7 is still after step 6).
+- Open issues / decisions needed:
+  1. The never-live corner of D-17(e) is accepted as dossier R-8. Nothing changed for it.
+  2. The stale docs (§5.1, §5.6, §8) were updated by the governor.
+  3. A leftover staging dir from before this card (marker only, no `_rejected.parquet`) is finished with no rejected rows.
+  4. The full build on the real archive (U-1/U-2 refresh) is re-run after landing, as the card says. This card did not touch `data/`.
+- Proposed commit: `fix(M0b): a match a newer parser rejects leaves Silver and the app; the error table (D-17) [M0b.13]`. Trailer `Module: M0b.13`

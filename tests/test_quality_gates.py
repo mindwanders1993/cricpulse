@@ -182,3 +182,33 @@ def test_player_match_grain_gate_fails_on_duplicate(con):
     with pytest.raises(QualityGateFailure, match=r"\[player_match_grain_uniqueness\]") as exc:
         run_quality_gates(con)
     assert "innings_grain_uniqueness" not in str(exc.value)
+
+
+# --- never_shrinks_matches with removals (M0b dossier D-17e) --------------------------------
+
+
+def test_never_shrinks_matches_allows_exactly_the_removed_matches(con):
+    matches, deliveries = _counts(con)
+    results = run_quality_gates(con, previous=_previous(matches + 2, deliveries), removed=2)
+    gate = next(r for r in results if r["check"] == "never_shrinks_matches")
+    assert gate == {
+        "check": "never_shrinks_matches",
+        "passed": True,
+        "value": matches,
+        "removed": 2,
+    }
+
+
+def test_never_shrinks_matches_fails_on_any_other_drop(con):
+    matches, deliveries = _counts(con)
+    with pytest.raises(QualityGateFailure, match=r"\[never_shrinks_matches\].*less 1 removed"):
+        run_quality_gates(con, previous=_previous(matches + 2, deliveries), removed=1)
+
+
+def test_removed_leaves_the_deliveries_gate_unchanged(con):
+    matches, deliveries = _counts(con)
+    with pytest.raises(QualityGateFailure, match=r"\[never_shrinks_deliveries\]") as exc:
+        run_quality_gates(
+            con, previous=_previous(matches + 1, int(deliveries / 0.999) + 1), removed=1
+        )
+    assert "never_shrinks_matches" not in str(exc.value)

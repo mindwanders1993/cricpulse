@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 
 from src.parsers.match_parser import PARSER_VERSION, MatchParser
-from src.publisher import archive, manifest
+from src.publisher import archive, manifest, quarantine
 from src.utils import compute_bytes_sha256
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -152,3 +152,52 @@ def test_manifest_rows_upsert_into_manifest(tmp_path: Path):
         "version": "v20261103T0230Z",
     }
     assert manifest.is_current(df, "1001", compute_bytes_sha256(T20), PARSER_VERSION)
+
+
+# --- M0b dossier D-17: the error table ------------------------------------------------------
+
+
+def _held(match_id: str, raw: bytes, parser_version: int = PARSER_VERSION) -> pl.DataFrame:
+    row = {
+        "match_id": match_id,
+        "file_sha256": compute_bytes_sha256(raw),
+        "parser_version": parser_version,
+        "error": "JSONDecodeError: bad",
+        "action": quarantine.NOT_LOADED,
+        "version": "v20261101T0230Z",
+    }
+    return quarantine.upsert(pl.DataFrame(schema=quarantine.SCHEMA), [row])
+
+
+def test_a_member_the_error_table_holds_is_skipped(tmp_path: Path):
+    zp = _zip(tmp_path / "a.zip", {"1001.json": T20, "1003.json": b"{not json"})
+    held = _held("1003", b"{not json")
+
+    items = archive.iter_changed(zp, _empty_manifest(), PARSER_VERSION, False, held)
+
+    assert [m for m, _, _ in items] == ["1001"]
+
+
+def test_a_held_member_is_read_again_on_a_new_sha_a_newer_parser_or_reparse_all(tmp_path: Path):
+    zp = _zip(tmp_path / "a.zip", {"1003.json": b"{not json"})
+
+    def ids(df: pl.DataFrame, reparse_all: bool = False) -> list[str]:
+        return [
+            m
+            for m, _, _ in archive.iter_changed(
+                zp, _empty_manifest(), PARSER_VERSION, reparse_all, df
+            )
+        ]
+
+    assert ids(_held("1003", b"{other bytes")) == ["1003"]
+    assert ids(_held("1003", b"{not json", parser_version=PARSER_VERSION - 1)) == ["1003"]
+    assert ids(_held("1003", b"{not json"), reparse_all=True) == ["1003"]
+
+
+def test_the_sha_of_each_rejected_file_is_recorded(tmp_path: Path):
+    zp = _zip(tmp_path / "a.zip", {"1001.json": T20, "1003.json": b"{not json"})
+    items = archive.iter_changed(zp, _empty_manifest(), PARSER_VERSION, reparse_all=False)
+    state = archive.parse_to_staging(items, tmp_path / "_staging" / "v1")
+
+    assert [m for m, _ in state.quarantined] == ["1003"]  # the (match_id, error) shape is kept
+    assert state.quarantined_sha256 == {"1003": compute_bytes_sha256(b"{not json")}

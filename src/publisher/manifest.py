@@ -43,6 +43,11 @@ def upsert(df: pl.DataFrame, rows: list[dict]) -> pl.DataFrame:
     return pl.concat([kept, new])
 
 
+def drop(df: pl.DataFrame, match_ids: list[str]) -> pl.DataFrame:
+    """Drop the rows of matches removed from Silver (M0b dossier D-17a: their manifest row goes)."""
+    return df.filter(~pl.col("match_id").is_in(match_ids))
+
+
 def save(data_dir: Path, df: pl.DataFrame) -> None:
     path = manifest_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)

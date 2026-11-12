@@ -16,7 +16,7 @@ from src.downloaders.match_downloader import MatchDownloader
 from src.downloaders.register_downloader import RegisterDownloader
 from src.parsers.match_parser import PARSER_VERSION
 from src.parsers.register_parser import RegisterParser
-from src.publisher import manifest, silver
+from src.publisher import manifest, quarantine, silver
 from src.publisher.archive import iter_changed, parse_to_staging
 from src.publisher.bench import BATTER, H2H_BATTER, H2H_BOWLER, RUNS, run_bench, verdict
 from src.publisher.publisher import SnapshotPublisher
@@ -33,6 +33,9 @@ VERSION_FORMAT = "v%Y%m%dT%H%MZ"  # M0b dossier D-8
 # M0b dossier D-12(c): written after parse_to_staging returns. It holds the run's manifest rows, so a
 # leftover merged at start reaches the manifest and D-12(a)'s newer-row rule rebuilds the snapshot
 PARSED_MARKER = "_parsed.parquet"
+# M0b dossier D-17(f): the run's error-table rows, its planned removals among them, written beside the
+# marker and before it, so a crashed removal is finished like a crashed merge
+REJECTED_PLAN = "_rejected.parquet"
 
 Member = tuple[str, str, bytes]  # (match_id, sha256, raw_bytes), as archive.iter_changed yields
 
@@ -45,18 +48,23 @@ def _report_path(settings: Settings, version: str) -> Path:
     return settings.runs_dir / f"{version}.json"
 
 
-def _iter_changed_dir(matches_dir: Path, manifest_df: pl.DataFrame) -> Iterator[Member]:
+def _iter_changed_dir(
+    matches_dir: Path, manifest_df: pl.DataFrame, quarantine_df: pl.DataFrame
+) -> Iterator[Member]:
     """The directory twin of archive.iter_changed: yield the .json files that are new or changed."""
     for path in sorted(matches_dir.glob("*.json")):
         raw = path.read_bytes()
         sha = compute_bytes_sha256(raw)
         # M0b dossier D-9: match id = file stem, wi_ prefix kept
-        if not manifest.is_current(manifest_df, path.stem, sha, PARSER_VERSION):
+        if manifest.is_current(manifest_df, path.stem, sha, PARSER_VERSION):
+            continue
+        # M0b dossier D-17(d): a file the error table holds is skipped like a current one
+        if not quarantine.is_held(quarantine_df, path.stem, sha, PARSER_VERSION):
             yield path.stem, sha, raw
 
 
 def _recover_staging(settings: Settings) -> None:
-    """Merge a leftover staging dir whose parse finished; delete one whose parse did not."""
+    """Finish a leftover staging dir whose parse finished; delete one whose parse did not."""
     root = settings.silver_dir / "_staging"
     if not root.is_dir():
         return
@@ -67,18 +75,56 @@ def _recover_staging(settings: Settings) -> None:
             logger.warning("staging_deleted", staging=str(leftover))
             shutil.rmtree(leftover)
             continue
-        # M0b dossier D-12(c): with the marker, finish what the crashed run started (steps 6 and 7)
+        # M0b dossier D-12(c), D-17(f): with the marker, finish what the crashed run started
         rows = pl.read_parquet(marker).to_dicts()
-        silver.merge(settings.silver_dir, leftover)
-        manifest.save(settings.data_dir, manifest.upsert(manifest.load(settings.data_dir), rows))
-        logger.warning("staging_recovered", staging=str(leftover), matches=len(rows))
+        plan = leftover / REJECTED_PLAN
+        rejected = pl.read_parquet(plan).to_dicts() if plan.exists() else []  # none before D-17
+        _apply(settings, leftover, rows, rejected)
+        logger.warning(
+            "staging_recovered", staging=str(leftover), matches=len(rows), rejected=len(rejected)
+        )
 
 
-def _write_marker(staging: Path, manifest_rows: list[dict]) -> None:
-    marker = staging / PARSED_MARKER
-    tmp = marker.with_name(marker.name + ".tmp")
-    pl.DataFrame(manifest_rows, schema=manifest.SCHEMA).write_parquet(tmp)
-    tmp.replace(marker)
+def _write_marker(staging: Path, manifest_rows: list[dict], rejected_rows: list[dict]) -> None:
+    # M0b dossier D-17(f): written even when nothing parsed, so staging may not exist yet; the plan
+    # goes first, so the marker alone says both are whole
+    staging.mkdir(parents=True, exist_ok=True)
+    for name, rows, schema in (
+        (REJECTED_PLAN, rejected_rows, quarantine.SCHEMA),
+        (PARSED_MARKER, manifest_rows, manifest.SCHEMA),
+    ):
+        path = staging / name
+        tmp = path.with_name(path.name + ".tmp")
+        pl.DataFrame(rows, schema=schema).write_parquet(tmp)
+        tmp.replace(path)
+
+
+def _apply(
+    settings: Settings, staging: Path, manifest_rows: list[dict], rejected_rows: list[dict]
+) -> pl.DataFrame:
+    """Write a parsed run into the error table, Silver and the manifest; return the error table.
+
+    M0b dossier D-17(f): every write before the merge is replayed from the marker after a crash, and the
+    merge deletes the marker last, so a removal is finished by the next run as a merge is (D-12c).
+    """
+    data_dir = settings.data_dir
+    table = quarantine.upsert(quarantine.load(data_dir), rejected_rows)
+    # M0b dossier D-17(c): a row leaves the error table when its file parses cleanly
+    table = quarantine.drop(table, [r["match_id"] for r in manifest_rows])
+    quarantine.save(data_dir, table)
+    manifest_df = manifest.load(data_dir)
+    removed = [r["match_id"] for r in rejected_rows if r["action"] == quarantine.REMOVED]
+    if removed:
+        # M0b dossier D-17(a): the same file, rejected by a newer parser, leaves Silver and the manifest
+        silver.remove(settings.silver_dir, removed)
+        manifest_df = manifest.drop(manifest_df, removed)
+        manifest.save(data_dir, manifest_df)
+    if manifest_rows:
+        silver.merge(settings.silver_dir, staging)  # step 6; deletes staging and its marker
+        manifest.save(data_dir, manifest.upsert(manifest_df, manifest_rows))  # step 7
+    elif staging.exists():
+        shutil.rmtree(staging)  # nothing was staged: the marker goes once the removal is written
+    return table
 
 
 def _up_to_date(
@@ -87,6 +133,7 @@ def _up_to_date(
     files_seen: int,
     registers: dict[str, str],
     manifest_df: pl.DataFrame,
+    quarantine_df: pl.DataFrame,
 ) -> bool:
     """M0b dossier D-12(a): measured against the live snapshot, so a run whose gates failed is rebuilt."""
     if files_seen or previous is None:
@@ -96,7 +143,10 @@ def _up_to_date(
     if not report.exists() or json.loads(report.read_text()).get("registers") != registers:
         return False
     # M0b dossier D-12(a): a manifest row newer than LATEST.json belongs to a run that never published
-    return manifest_df.filter(pl.col("version") > previous.version).is_empty()
+    if not manifest_df.filter(pl.col("version") > previous.version).is_empty():
+        return False
+    # M0b dossier D-17(e): so does an error-table row, a removal among them
+    return quarantine_df.filter(pl.col("version") > previous.version).is_empty()
 
 
 def _pipeline(
@@ -104,7 +154,7 @@ def _pipeline(
     source: str,
     reparse_all: bool,
     get_registers: Callable[[dt.date], tuple[Path, Path]],
-    get_members: Callable[[dt.date, pl.DataFrame], Iterable[Member]],
+    get_members: Callable[[dt.date, pl.DataFrame, pl.DataFrame], Iterable[Member]],
 ) -> LatestInfo | None:
     """M0b dossier §5.1 steps 1-11; returns what LATEST.json now names, or None when up to date."""
     started = _utc_now()
@@ -124,27 +174,42 @@ def _pipeline(
     people_csv, names_csv = get_registers(started.date())  # step 2
     registers = {p.name: compute_file_sha256(p) for p in (people_csv, names_csv)}
     manifest_df = manifest.load(settings.data_dir)
-    items = get_members(started.date(), manifest_df)  # step 3
+    quarantine_df = quarantine.load(settings.data_dir)  # M0b dossier D-17(c): the error table
+    items = get_members(started.date(), manifest_df, quarantine_df)  # step 3
 
     # Step 4. M0b dossier §5.2: silver/_staging/<version>/; archive.py reads the version from its name
     staging = settings.silver_dir / "_staging" / version
     state = parse_to_staging(items, staging)
-    if state.changed_ids:
-        _write_marker(staging, state.manifest_rows)
+    # M0b dossier D-17(a-c): what happens to each rejected file, set against the manifest
+    rejected = quarantine.classify(
+        manifest_df,
+        [(m, state.quarantined_sha256[m], e) for m, e in state.quarantined],
+        PARSER_VERSION,
+        version,
+    )
+    if state.changed_ids or rejected:
+        _write_marker(staging, state.manifest_rows, rejected)
+    removals = sum(r["action"] == quarantine.REMOVED for r in rejected)
     console.print(
         f"Changed: [cyan]{state.files_seen}[/cyan], parsed: [cyan]{len(state.changed_ids)}[/cyan], "
-        f"quarantined: [cyan]{len(state.quarantined)}[/cyan]"
+        f"quarantined: [cyan]{len(state.quarantined)}[/cyan], removed: [cyan]{removals}[/cyan]"
     )
 
     previous = read_latest(settings.data_dir)
-    if _up_to_date(settings, previous, state.files_seen, registers, manifest_df):  # step 5
+    if _up_to_date(  # step 5
+        settings, previous, state.files_seen, registers, manifest_df, quarantine_df
+    ):
         console.print(f"[yellow]Up to date: {previous.version} stays live.[/yellow]")
         return None
 
-    if state.changed_ids:
-        silver.merge(settings.silver_dir, staging)  # step 6
-        new_manifest = manifest.upsert(manifest_df, state.manifest_rows)
-        manifest.save(settings.data_dir, new_manifest)  # step 7
+    if state.changed_ids or rejected:
+        quarantine_df = _apply(settings, staging, state.manifest_rows, rejected)  # steps 6 and 7
+    # M0b dossier D-17(e): the gate allows exactly the matches removed since the live snapshot
+    removed = quarantine.removed_since(quarantine_df, previous.version) if previous else 0
+    # M0b dossier D-17(h): a rejected file counts toward quarantine_bounded until a run publishes, so the
+    # error table's unpublished rows this run skipped count as rejected and as tried
+    read_ids = state.changed_ids + [m for m, _ in state.quarantined]
+    held = quarantine.held_since(quarantine_df, previous.version, read_ids) if previous else 0
 
     # Step 8. M0b dossier §5.2: build on the local tmp/, never on the mount
     temp_db = settings.tmp_dir / f"{version}.duckdb"
@@ -160,8 +225,10 @@ def _pipeline(
             run_quality_gates(
                 loader.con,
                 previous=previous,
-                quarantined=len(state.quarantined),
-                files_seen=state.files_seen,  # M0b dossier D-5: the changed members tried
+                quarantined=len(state.quarantined) + held,
+                # M0b dossier D-5: the changed members tried; D-17(h): the held ones too
+                files_seen=state.files_seen + held,
+                removed=removed,
             )
         finally:
             loader.close()
@@ -170,6 +237,7 @@ def _pipeline(
         temp_db.unlink(missing_ok=True)
 
     pruned = publisher.prune(today=started.date())  # step 11
+    error_rows = {r["match_id"]: r for r in quarantine_df.iter_rows(named=True)}
     report = {
         "version": version,
         "source": source,
@@ -177,7 +245,8 @@ def _pipeline(
         "registers": registers,  # M0b dossier D-12(b)
         "files_seen": state.files_seen,
         "changed": len(state.changed_ids),
-        "quarantined": [{"match_id": m, "error": e} for m, e in state.quarantined],
+        # M0b dossier D-17(c): each rejected file as the error table holds it, with its action
+        "quarantined": [error_rows[m] for m, _ in state.quarantined],
         "snapshot": info.model_dump(mode="json"),
         "pruned": [p.relative_to(settings.data_dir).as_posix() for p in pruned],
     }
@@ -236,7 +305,9 @@ def ingest_local(
         source=str(matches_dir),
         reparse_all=False,
         get_registers=lambda day: (people_csv, names_csv),
-        get_members=lambda day, manifest_df: _iter_changed_dir(matches_dir, manifest_df),
+        get_members=lambda day, manifest_df, quarantine_df: _iter_changed_dir(
+            matches_dir, manifest_df, quarantine_df
+        ),
     )
 
 
@@ -265,11 +336,12 @@ def run(
         source=archive,
         reparse_all=reparse_all,
         get_registers=RegisterDownloader(settings=settings).download_registers_to_bronze,
-        get_members=lambda day, manifest_df: iter_changed(
+        get_members=lambda day, manifest_df, quarantine_df: iter_changed(
             MatchDownloader(settings=settings).download_to_bronze(archive, day),
             manifest_df,
             PARSER_VERSION,
             reparse_all,
+            quarantine_df,
         ),
     )
     _roll_out(settings)  # a failed gate raised above and never gets here

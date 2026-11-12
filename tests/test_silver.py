@@ -167,3 +167,71 @@ def test_staging_without_a_table_is_refused(tmp_path: Path):
     with pytest.raises(FileNotFoundError, match="wickets"):
         silver.merge(tmp_path / "silver", staging)
     assert not (tmp_path / "silver" / "matches.parquet").exists()
+
+
+# --- M0b dossier D-17(a), (f): removing a match a newer parser rejects ----------------------
+
+
+def test_remove_drops_the_ids_from_every_table_with_nothing_staged(tmp_path: Path):
+    silver_dir = _first_run(tmp_path)
+    kept = {
+        t: _row_hashes(_read(silver_dir, t).filter(pl.col("match_id") == "1002"))
+        for t in silver.TABLES
+    }
+
+    counts = silver.remove(silver_dir, ["1001"])
+
+    for table in silver.TABLES:
+        df = _read(silver_dir, table)
+        assert "1001" not in df["match_id"].to_list(), table
+        assert _row_hashes(df) == kept[table], table  # every other row exactly as it was
+        assert counts[table] == df.height
+    assert counts["matches"] == 1
+    assert not list(silver_dir.glob("*.tmp"))
+
+
+def test_remove_rerun_after_a_crash_mid_rename_finishes_the_rest(tmp_path: Path):
+    silver_dir = _first_run(tmp_path)
+    # The crashed removal renamed matches only; every other table still holds 1001
+    matches = _read(silver_dir, "matches")
+    matches.filter(pl.col("match_id") != "1001").write_parquet(silver_dir / "matches.parquet")
+
+    counts = silver.remove(silver_dir, ["1001"])
+
+    for table in silver.TABLES:
+        assert "1001" not in _read(silver_dir, table)["match_id"].to_list(), table
+    assert counts["matches"] == 1
+
+
+def test_exception_between_remove_write_and_rename_leaves_silver_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    silver_dir = _first_run(tmp_path)
+    before = {t: (silver_dir / f"{t}.parquet").read_bytes() for t in silver.TABLES}
+
+    def fail_rename(self, target):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(Path, "replace", fail_rename)
+    with pytest.raises(OSError, match="disk went away"):
+        silver.remove(silver_dir, ["1001"])
+    monkeypatch.undo()
+
+    for table in silver.TABLES:
+        assert (silver_dir / f"{table}.parquet").read_bytes() == before[table], table
+
+
+def test_remove_fails_loudly_when_the_count_does_not_fall_by_the_ids(tmp_path: Path):
+    silver_dir = _first_run(tmp_path)
+    matches = _read(silver_dir, "matches")
+    pl.concat([matches, matches.filter(pl.col("match_id") == "1002")]).write_parquet(
+        silver_dir / "matches.parquet"
+    )
+    before = {t: (silver_dir / f"{t}.parquet").read_bytes() for t in silver.TABLES}
+
+    with pytest.raises(ValueError, match="after removal matches"):
+        silver.remove(silver_dir, ["1001"])
+
+    for table in silver.TABLES:
+        assert (silver_dir / f"{table}.parquet").read_bytes() == before[table], table
+    assert not list(silver_dir.glob("*.tmp"))
