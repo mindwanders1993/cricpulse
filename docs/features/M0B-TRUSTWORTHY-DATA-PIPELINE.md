@@ -13,7 +13,7 @@
 | **Goal** | A nightly job that turns Cricsheet files into a new, versioned DuckDB snapshot — and can never shrink, corrupt or empty the live data. |
 | **Fixes** | Blocking bugs 1 and 2 from `08 §9`, and the data half of bug 3. |
 | **Done when** | (1) Two runs in a row never lose a match. (2) A bad file or a failed gate leaves the live snapshot untouched. (3) The API serves the run's snapshot locally; on Cloud Run at the deploy, after the owner's final local testing (D-15). |
-| **Size** | 16 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 and M0b.14 added 12 Nov 2026, D-17; M0b.15 and M0b.16 added 13 Nov 2026, D-18) |
+| **Size** | 17 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 and M0b.14 added 12 Nov 2026, D-17; M0b.15, M0b.16 and M0b.17 added 13 Nov 2026, D-18) |
 | **Risk** | Memory and time of the first full build — measured first (M0b.1) |
 
 ---
@@ -95,6 +95,7 @@ API endpoint /internal/sync-daily                  Cloud Run Job (separate proce
 ```
 python -m src.publisher.main run [--archive all_json] [--reparse-all]
 
+ 0  take <data_dir>/run.lock, or exit 1 if another run holds it; released at the end, whatever happens (D-18a)
  1  version = now_utc("v%Y%m%dT%H%MZ")
  2  download registers  → bronze/registers/<date>/{people,names}.csv
  3  download archive    → bronze/cricsheet/<date>/<archive>.zip
@@ -104,15 +105,17 @@ python -m src.publisher.main run [--archive all_json] [--reparse-all]
         if the error table holds (id, sha, PARSER_VERSION) → skip (D-17d)
         try parse_json(id, orjson.loads(bytes)) → staging batch
         except → quarantine(id, error); its action set against the manifest (D-17a-c)
+        (MemoryError, OSError → the run stops, D-18e)
         every 1,000 matches → write staging Parquet parts (bounded memory)
  5  if nothing changed and registers unchanged → stop, exit 0 ("up to date")
  6  write the error table; remove the `removed` matches from Silver (D-17a); merge staging into Silver,
     table by table (§5.4)
- 7  write the new manifest
+ 7  write the new manifest; then delete the staging folder, its marker first (D-18b)
  8  build Gold from ALL Silver into tmp/<version>.duckdb (§5.5)
  9  run quality gates against the previous LATEST.json (§5.6)
 10  publish: snapshots/<version>.duckdb, then LATEST.json (§5.7)
-11  prune old snapshots and zips; write runs/<version>.json (run report)
+11  prune old snapshots and zips; write runs/<version>.json (run report; an all_json run adds
+    absent_from_archive, also logged on every all_json run, D-18d)
 ```
 
 A failure at any step before 10 leaves `LATEST.json` and every published snapshot untouched.
@@ -129,6 +132,7 @@ silver/_staging/<version>/<table>/part-<n>.parquet   # deleted once the manifest
 snapshots/cricket_<version>.duckdb
 snapshots/LATEST.json
 runs/<version>.json
+run.lock                          # held by the running run (D-18a)
 tmp/                              # local scratch only — never on the mount
 ```
 
@@ -302,6 +306,10 @@ Review findings left open on purpose. Each has a home; whoever plans that home r
 | 6 | The API's and the merge's DuckDB connections set no spill folder | the deploy (D-15), with the D-3 bench |
 | 7 | The rollout checks that a revision is ready, not which snapshot it serves | the deploy (D-15); closes for good when M0a refuses to start without a snapshot |
 | D-18a | Whether the lock's exclusive create holds on the bucket mount | the deploy (D-15): start a second execution during a run; it must refuse |
+| 2nd look 1 | A run killed by Cloud Run (time limit, memory) leaves `run.lock`, so the job's one retry (`deploy.yml`, `--max-retries=1`) is refused and the next run is the next night's | the deploy (D-15): set the stale age to the job's task timeout, or drop the retry |
+| 2nd look 2 | `--archive all` or `all_json.zip` reads the full archive but writes no absence log; the schedules pass `all_json` | first card of M1 |
+| 2nd look 3, 4 | No test fails if `ingest-local` stops taking the lock; no test asserts the `absent_from_archive` log line | first card of M1 |
+| 2nd look 5 | A run that outlives 2 hours deletes the lock of the run that took it over | first card of M1 (laptop only; the cloud job stops at 60 minutes) |
 | 12 | The eight role skills are links to a folder on the owner's laptop, and `AGENTS.md` names it by its full path | the owner, outside M0b |
 
 ---
@@ -322,6 +330,10 @@ Review findings left open on purpose. Each has a home; whoever plans that home r
    that parses again leaves the table; a retry after a failed gate passes `never_shrinks_matches` for a removal
    and fails `quarantine_bounded` again for too many rejections; a crashed removal is finished; `--reparse-all`
    retries held files.
+9. D-18 (M0b.15, M0b.16): a second run while the lock is held exits 1 and changes nothing; the lock goes after a
+   run that succeeds or fails; a lock older than 2 hours is taken over; a crash between the merge and the manifest
+   is finished by the next run; an all_json run names a match the archive lacks and keeps it; a MemoryError stops
+   the run and removes nothing; a name listed twice in one team gives one row and passes the uniqueness gate.
 
 **UAT journeys (`docs/uat/M0B-UAT.md`, owner walks them):**
 - U-1 Full local build on all files (22,818 on 26 Oct; 23,241 on 12 Nov) → match count, size, time recorded.
@@ -351,5 +363,6 @@ Review findings left open on purpose. Each has a home; whoever plans that home r
 | M0b.14 | UAT refresh after D-17 | A |
 | M0b.15 | Fix round: one run at a time, manifest before staging goes, the absence log, a passing failure stops the run (D-18) | A |
 | M0b.16 | Fix: a name listed twice for one team keeps one row (D-16b, D-18c) | A |
+| M0b.17 | UAT re-run after the fix round | A |
 
 Cards with subtasks and Verify steps: `M0B-TASK-CARDS.md`.

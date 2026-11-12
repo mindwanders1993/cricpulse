@@ -41,6 +41,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 10 | M0b.14 UAT refresh after D-17 | A | Sonnet · medium | M0b.13 landed; runs alone (it writes `data/`) |
 | 11 | M0b.15 Fix round: run safety and the absence log (D-18a, b, d, e) | A | Opus · **xhigh** | now: the review is written |
 | 12 | M0b.16 Fix: a name listed twice for one team (D-18c) | A | Opus · high | M0b.15 landed (same checkout, one builder at a time) |
+| 13 | M0b.17 UAT re-run after the fix round | A | Sonnet · medium | the second look passed; runs alone (it writes `data/`) |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -539,3 +540,27 @@ untracked `08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` is the owner's: leave it alon
 **Verify:** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_match_parser.py -q && python -m pytest -q`
 **Done when:** both tests pass; the full suite passes.
 **Depends:** M0b.15 landed (one builder at a time in this checkout)
+
+---
+
+### M0b.17 — UAT re-run after the fix round
+**Goal:** The test sheet the owner signs shows the final code on the real archive: one full-archive run with its
+missing-match count, and the lock gone afterwards.
+**Why:** M0b.15 (`434163d`) and M0b.16 (`f88ab7c`) changed the run after the M0b.14 re-run was recorded.
+**Colour:** 🟡 (runs the real pipeline on `data/`; changes no `src/` file)
+**Owns:** `docs/uat/M0B-UAT.md`. The run writes under `data/` as the nightly job does, alone. The untracked
+`08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` is the owner's: leave it alone and out of the proof's `git status` check.
+**Subtasks:**
+1. `python -m src.publisher.main run --archive all_json`, in the foreground (it takes about 10 minutes; wait for its
+   exit before anything else). Expected: either "Up to date: v20261112T1811Z stays live", or a new version with at
+   least 23,239 matches if Cricsheet added matches since 12 Nov. Either way the console line shows "absent from
+   archive: N", and afterwards `data/run.lock` does not exist.
+2. `GEMINI_API_KEY= python scripts/run_uat.py` on whatever `LATEST.json` names.
+3. In `docs/uat/M0B-UAT.md`, add a section "Re-run after the fix round (D-18)" below the M0b.14 one: the command,
+   the console lines, the version that is live, the match and delivery counts, the absent count (and the ids, from the
+   `absent_from_archive` log line, if any), the time, and the lock check. If a new version was published, update the
+   one U-3 line to that version. Change nothing else in the sheet.
+**Verify:** `source .venv/bin/activate && GEMINI_API_KEY= python scripts/run_uat.py && grep -q "Re-run after the fix round" docs/uat/M0B-UAT.md && test ! -e data/run.lock`
+**Done when:** 1–3 recorded as expected. Anything else (the count drops, a gate fails, the lock is left behind, the
+run refuses) → BLOCKED with the output; fix nothing.
+**Depends:** M0b.16 landed; the second look passed

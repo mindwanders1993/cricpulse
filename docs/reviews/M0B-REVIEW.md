@@ -110,3 +110,112 @@ A short fix round, then a second look at the fix diff only:
 Yes, two things.
 1. **Silver and the manifest are written before anything checks the result, and the gap was found one case at a time.** D-12(a) (a failed gate, then a quiet "up to date"), R-7 / D-17 (a bad match stuck in Silver after M0b.11's failed build), D-17(h) (the retry that passed quietly), and now findings 2 and 4 are all the same shape: state gets ahead of `LATEST.json` and the next run trusts it. Four rulings and two findings for one cause.
 2. **A builder wrote an open issue in its handoff note and no card picked it up.** M0b.8's note named the missing absence log, the merge-then-manifest crash edge and the stale `publish_snapshot` docstring; all three are findings here (3, 4, 10). The same module also had six BLOCKED notes because a card's Owns or its facts did not match the code (M0b.2, M0b.7, M0b.8 twice, M0b.10, M0b.11), though each of those was caught before any code was written, which is the notes working as meant.
+
+---
+
+## Second look — fix round (8514602..f88ab7c)
+- **Reviewer:** kensa (fresh session, claude-fable-5-2) · **Date:** 13 Nov 2026 · **Branch:** `feat/M0b-trustworthy-data-pipeline` at `f88ab7c` · **Colour:** 🔴
+- **Scope:** the fix diff only: `db181cd` (D-18 notes), `434163d` (M0b.15), `f88ab7c` (M0b.16). Read: D-18, §7.1, both cards, both handoff notes, and every changed line under `src/` and `tests/`. Findings 5, 6, 7, 9, 10, 11 and 12 are carried (§7.1) and were not looked at again.
+- **Ran:** `ruff check src tests` (clean), `ruff format --check src tests` (61 files formatted), `python -m pytest -q` (**194 passed, 2 skipped**: the two live cricsheet.org checks, as before). In a scratch copy of `src/` and `tests/` (made with `git archive`, deleted afterwards): 20 small reversals of the fix, one at a time, each run against the card's test slice; 17 probes through the real CLI; 8 real processes racing for the lock, 5 rounds; one run killed with SIGTERM. `data/` and `.env*` were not opened. Nothing in the repo was changed but this section.
+
+### Pass 1 — Logic and the spec: FLAGGED (low only)
+### Pass 2 — Security and red zones: FLAGGED (low only)
+### Pass 3 — Rules and hygiene: PASS
+
+**In one paragraph.** All five D-18 lines hold in the code. The fix broke nothing it touched: the crash recovery, D-17's removal, the error table and `ingest-local` all behave as ruled, and the lock is released on every exit that Python can unwind. I found no way for this diff to shrink, corrupt or lose live data. Six low findings: two are tests that do not fail when half a ruling line is taken out, two are edges of the lock, one is a spelling of the full archive that skips the absence log, one is the as-built docs.
+
+---
+
+### 1. Does each D-18 line hold, and does a test fail without it?
+
+"Fails without it" was checked by taking the line out of the scratch copy and running the slice (`test_pipeline`, `test_silver`, `test_archive`, `test_match_parser`, `test_quarantine`).
+
+| Line | Holds in the code | Test | Fails without the fix |
+|---|---|---|---|
+| (a) refuse a second run | `main.py:74-87`, lock taken at `:367` and `:402`, before the D-12(d) check (`:218`) and the staging recovery (`:224`) | `test_pipeline.py:715` | Yes, for `run`. **No for `ingest-local`** (finding 3) |
+| (a) the lock goes in a `finally` | `main.py:91-94` | `test_pipeline.py:756`, and 29 others that would meet a left-over lock | Yes |
+| (a) 2 hours, then taken over with a warning | `main.py:43`, `:81`, `:89-90`; an empty lock ages by file time, `:64-65` | `test_pipeline.py:770`, `:794` | Yes: 1 hour, 3 hours and "never" each fail |
+| (b) the merge leaves staging | `silver.py:88-90` | `test_silver.py:63`, `test_pipeline.py:834` | Yes |
+| (b) staging goes after step 7, marker first | `main.py:171-176` | `test_pipeline.py:813`, `:834` | Yes: deleting before the save fails both |
+| (c) an exact repeat keeps one row; both teams still raises | `match_parser.py:166-172` | `test_match_parser.py:121`, `:131`; the two D-16(c) tests, unchanged | Yes, each way |
+| (d) member ids, changed or not | `archive.py:51-52` | `test_archive.py:209` | Yes |
+| (d) report field and console count, `all_json` only | `main.py:250`, `:256`, `:315-316`, `:401` | `test_pipeline.py:867`, `:891` | Yes, each of the three |
+| (d) the `absent_from_archive` log line | `main.py:251-252` | none | **No** (finding 4) |
+| (d) nothing deleted | no delete on that path | `test_pipeline.py:867` (four matches stay in Gold and the manifest) | n/a |
+| (e) `MemoryError` and `OSError` stop the run | `archive.py:94-97` | `test_archive.py:222` (both), `test_pipeline.py:910` | Yes, each error on its own |
+
+D-18(d) as amended in `db181cd` matches the code: an up-to-date full run prints the count, logs the ids and writes no report (probed).
+
+### 2. Did the fix break anything it touched?
+
+| Area | What I did | Result |
+|---|---|---|
+| D-12(c) recovery, now that the merge leaves staging | Crash between the merge and step 7 (the card's test). Crash right after step 7, marker still there. Crash between the marker's delete and the folder's. A merge that raises | Each is finished by the next run. The replayed merge adds no rows (row counts per table equal before and after). The folder without a marker is deleted and the run still publishes, because the manifest rows are newer than `LATEST.json`. No false "Up to date" in any of them |
+| D-17's removal path | Parser bump rejects `9001` (unchanged file) while a new match `1003` arrives; crash between the merge and step 7 | Next run: `9001` gone from all five Silver tables and the manifest, `1003` in the manifest and Gold, the error row still `removed` at the crashed run's version, the gate passes, the run after that is "Up to date". The removal-only case (`test_pipeline.py:575`) passes unchanged |
+| The error table | Read `_apply` (`main.py:159-162`): unchanged but for where staging goes. Replays are idempotent: `upsert` keeps a `removed` row's version, `drop` is a filter | Safe. D-18(e)'s test also shows it byte-identical after a stopped run |
+| `ingest-local` | A held lock; a failure inside the run; a clean run | Refused with exit 1 and the tree byte-identical; lock held during the run and gone after the failure; no `absent_from_archive` field. The "no .json files" check runs before the lock and only reads the input folder |
+| The lock's `finally` | Success, "Up to date", a failed gate, D-12(d)'s refusal, `MemoryError`, `KeyboardInterrupt`, a failed rollout (`typer.Exit(1)` from `_roll_out`) | Lock gone every time. The rollout runs inside the lock (seen from inside `ensure_api_on`). A refused run never reaches the `finally`, so it leaves the holder's lock alone |
+| Real processes | 8 started on one barrier, 5 rounds | Exactly one held the lock each round, 7 refused, no lock left |
+
+Not an exit Python unwinds: a kill. See finding 1.
+
+### 3. Test integrity
+- One assertion changed, the one the card allows: `tests/test_silver.py:61-63`, `assert not staging.exists()` → `assert staging.exists()`. Its old meaning moved to `test_pipeline.py:813`, which fails if staging goes before the manifest is saved.
+- `git diff 8514602..f88ab7c -- tests` removes no other line. No test deleted, no `skip`, `xfail`, `noqa` or `type: ignore` added. The only new marker is one `parametrize`.
+- New: 9 tests in `test_pipeline.py`, 2 in `test_archive.py` (one runs twice), 2 in `test_match_parser.py`, one fixture. The fixture differs from `both_teams_1229824.json` in one line (Guernsey's "J Butler" → a second "IDA Damarell").
+- 18 of the 20 reversals were caught. The two that were not are findings 3 and 4.
+- **Hand recompute (Kaizen card rule),** on the new fixture, built with `sample_t20` and `sample_test` through the real `ingest-local` in a scratch folder:
+
+| Figure | By hand from the fixture | In the snapshot's mart |
+|---|---|---|
+| Batting, IDA Damarell (`580ae7f2`), T20 | 1 run, 2 balls faced, 0 dismissals, strike rate 50.00 | 1, 2, 0, 50.0, 1 match played, average NULL |
+| Bowling, ACF Stokes (`7f74b21d`), T20 | 6 legal balls, 5 runs conceded, 0 wickets, economy 5.00 | 6, 5, 0, 5.0 |
+
+Both match. The repeated name gives one `fact_player_match` row and one match played, not two (21 rows, 21 players).
+
+### 4. Red zones, line by line: why each change is safe
+- **`src/publisher/main.py:58-94` (the lock).** `open("x")` is the exclusive create. The lock holds a version and a time, no secret. A refusal raises before the `try`, so only the run that created a lock deletes it on the normal paths. The path is fixed (`data_dir/run.lock`); nothing a request or a file's content can steer. A lock whose content is not the expected JSON object fails the run with a traceback and leaves the lock: it fails closed. Flagged: findings 1 and 5.
+- **`main.py:149-177` (`_apply`).** Staging and its marker now outlive every write. The marker is deleted first, so a half-deleted folder can never be replayed. `_apply` is only called with a marker on disk (`:245-246` writes it under the same condition as `:267`; the recovery checks it at `:119`), so the unconditional `unlink` cannot miss. Gates still run before `publish` (`:287-297`); nothing in this diff writes `LATEST.json`.
+- **`main.py:248-258`, `:315-316` (the absence log).** Read-only on the manifest: a set difference, a log line, a count and a report field. The id set is filled by the time it is read, because `parse_to_staging` drains the reader first (`:237`).
+- **`main.py:367-377`, `:401-419` (the two commands).** The same calls as before, inside the lock. `bench` takes none and only reads.
+- **`src/publisher/archive.py:51-52`, `:94-97`.** The id is still only the file stem and is never used in a path. The re-raise sits before the catch-all, so D-5's quarantine is unchanged for every other error. A stopped parse leaves staging without a marker, which the next run deletes; Silver is untouched.
+- **`src/publisher/silver.py:88-90`.** One deletion removed. The `*.tmp`-then-rename merge is untouched.
+- **`src/parsers/match_parser.py:166-172`** (🟡, not a red zone). Same result as before for every file without a repeat; the both-teams check comes first.
+- No secret, key or token in the diff. The two handoff notes name the checkout by its home-folder path, as all 21 notes do; that belongs with carried finding 12.
+
+### The eight invariants
+1 kept (gates before publish, `main.py:287-297`; every write still `*.tmp` then rename; the lock is the only new file under `data_dir` and nothing reads it but the run) · 2 kept · 3 kept (no new library) · 4 kept (no cricket formula touched) · 5 kept (no request path changed) · 6, 7 not in scope · 8 kept. Evals: not yet (none before M2). Decision citations: every new branch and constant cites D-18 or D-16(b). Owns: each commit stays inside its card's Owns; `db181cd` is the governor's dossier edit.
+
+---
+
+### Findings
+
+No high, no medium.
+
+**Low**
+
+1. `src/publisher/main.py:91-94` with `:81-87` and `.github/workflows/deploy.yml:95-96` — **A run that is killed leaves its lock, and the retry is refused.** The `finally` only runs when Python unwinds. Probe: a run sent SIGTERM exits 143 and `run.lock` stays; the next start prints "another run is in progress" and exits 1. The cloud job has `--max-retries=1` and `--task-timeout=60m`: after a timeout, an out-of-memory kill or a moved instance, Cloud Run starts the retry at once, the lock is under 2 hours old, and the retry stops in seconds. The D-12(c) recovery then waits for the next schedule, about a day later, which takes the lock over. Before the fix the retry did that recovery. — *What a user would see:* nothing wrong in the app, and no data lost; one night's new matches arrive a day late, with a failure alert. On the laptop: closing the terminal mid-run blocks every run for 2 hours with a message that says a run is in progress and does not say the lock can be deleted. *Fix direction:* turn SIGTERM into an exception in `run` and `ingest-local` so the `finally` runs; or say in the message when the lock will be taken over. *Home:* the deploy (D-15), beside §7.1's D-18a row.
+
+2. `src/publisher/main.py:401` with `src/downloaders/match_downloader.py:21-23` — **Two other spellings of the full archive skip the absence log.** The downloader turns `--archive all` and `--archive all_json.zip` into `all_json.zip`. `main.py` compares the raw text with `"all_json"`. Probe: both fetch the full archive and publish; the console line has no "absent from archive", the report has no field, and no id is logged. — *What a user would see:* a full run typed by hand as `--archive all` names no withdrawn match. The two schedules pass `all_json` exactly (`scripts/infra_m0b.sh:190, 194`), so the nightly path is not affected.
+
+3. `tests/test_pipeline.py` (no test) for `src/publisher/main.py:367` — **No test fails when `ingest-local` stops taking the lock.** D-18(a) names both commands; the four lock tests drive `run` only. With the lock taken out of `ingest-local` the slice stays green (90 passed). The code is right today (probe: refused, tree unchanged, lock freed on failure). *Fix direction:* one test: a held lock, `ingest-local` exits 1 and changes nothing.
+
+4. `tests/test_pipeline.py:867` for `src/publisher/main.py:251-252` — **No test asserts the `absent_from_archive` log line.** After `db181cd`, that line is the only place the ids go on an up-to-date full run, which the handoff note calls the common Sunday case. With the line removed the slice stays green. *Fix direction:* assert the ids in `caplog` on the test's second `all_json` run.
+
+5. `src/publisher/main.py:94` — **A run deletes whatever lock is there when it ends, its own or not.** D-18(a) rules that a lock 2 hours old belongs to a dead run. If the run is alive (the laptop slept mid-run, or a download crawled), a second run takes the lock over, the two run side by side, and when the first ends it deletes the second's lock, so a third can start. Probe confirmed the delete. The handoff note's "another run's lock is never deleted" is true only while the 2-hour rule is. — *What a user would see:* review finding 1 again, but only after a run has lived past 2 hours. *Fix direction:* delete the lock only if it still holds this run's version. Rare; can be carried.
+
+6. `docs/features/M0B-TRUSTWORTHY-DATA-PIPELINE.md:96-116, 120-131, 310-324` — **The as-built sections do not show the fix.** §5.1's steps have no lock and no "staging goes after step 7"; §5.2's layout has no `run.lock`; §8's test list ends at D-17. D-18 and §5.2's staging line are right. One line each.
+
+**Seen, and not raised**
+- A run refused in the instant the holder finishes ends with a `FileNotFoundError` instead of the message (`main.py:62`). It exits non-zero and writes nothing; M0b.15's note lists it.
+- A lock that is valid JSON but not the expected object (`{}`, a time with no zone) fails every run with a traceback until someone deletes it. Only a hand-written lock can look like that.
+- Two spellings that the register maps to one id in one team keep one row, the first spelling (M0b.16's note). That follows the card's rule.
+- The takeover race and the bucket mount are ruled or carried (D-18a, §7.1).
+
+### Diff: 12 files, +776 / -40
+(`src/`: 4 files, +119 / -37. `tests/`: 4 files and one fixture, +566 / -1. The rest is the dossier and two handoff notes.)
+
+### Verdict: PASS
+Every D-18 line holds, nothing the fix touched is broken, and no test was weakened. The six findings are low and none can shrink or corrupt the live snapshot.
+- **Cheap to add before the pull request, the governor's call:** 3 and 4 (two short tests) and 6 (three doc lines).
+- **Carry in §7.1:** 1 → the deploy (D-15); 2 and 5 → the first card of M1.
