@@ -35,7 +35,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 4 | M0b.7 Publish | B | Opus · **xhigh** | M0b.6 committed |
 | 5 | M0b.8 Pipeline entry + integration test + cleanup | A | Opus · **xhigh** | M0b.5 and M0b.7 committed; lane B merged |
 | 6 | M0b.10 Cloud + D-3 measurement | A + owner | Opus · **xhigh** *(was high; 12 Nov 2026: it now changes the run)* | M0b.8 committed |
-| 7 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 done |
+| 7 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 landed *(its cloud steps wait for the deploy, D-15)* |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -319,7 +319,7 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
    before rate limits and the spend cap exist (M5))*. The bucket name comes from a repository variable `BUCKET`,
    default `cricpulse-data`.
 **Verify (builder):** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_rollout.py tests/test_pipeline.py tests/test_config.py tests/test_api_and_agents.py -q && python -m pytest -q && bash -n scripts/infra_m0b.sh && PROJECT_ID=demo-project ALERT_EMAIL=alerts@example.com DEPLOYER_SA=deployer@demo-project.iam.gserviceaccount.com bash scripts/infra_m0b.sh --dry-run setup && PROJECT_ID=demo-project bash scripts/infra_m0b.sh --dry-run first-build && python -m src.publisher.main bench --help && python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))" && ! grep -n "GCS_BUCKET\|SYNC_SECRET_TOKEN" .github/workflows/deploy.yml && grep -q -- "--no-allow-unauthenticated" .github/workflows/deploy.yml && ! grep -q -- "--allow-unauthenticated" .github/workflows/deploy.yml && PROJECT_ID=demo-project bash scripts/infra_m0b.sh --dry-run status && PROJECT_ID=demo-project BUCKET=other-bucket bash scripts/infra_m0b.sh --dry-run open`
-**Owner steps (after landing; the owner runs every `gcloud` command):**
+**Owner steps (at the deploy, after the owner's final local testing, D-15; the owner runs every `gcloud` command):**
 8. `PROJECT_ID=… ALERT_EMAIL=… DEPLOYER_SA=… bash scripts/infra_m0b.sh setup` (the alert needs gcloud's alpha
    component: `gcloud components install alpha` once if it is missing; if `cricpulse-data` is taken, set `BUCKET`
    here and the same name as the repository variable `BUCKET` before step 9)
@@ -330,7 +330,8 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
 11. `bash scripts/infra_m0b.sh bench`: the governor records the numbers in `docs/features/M0B-SPIKE-RESULTS.md`
     (cloud section) and the D-3 row. `D-3: bake` → a new card extends `deploy.yml`.
 12. After the next scheduled night, `… status`: a new version, or "up to date" with `/ready` on `LATEST.json`'s version.
-**Done when:** steps 8–12 pass (they are also UAT U-4 in M0b.11).
+**Done when:** steps 8–12 pass (they are also UAT U-4). Builder subtasks 1–7 landed 12 Nov 2026 (`a4ad996`);
+steps 8–12 wait for the deploy (D-15).
 **Depends:** M0b.8, M0b.1
 
 ---
@@ -339,9 +340,10 @@ owner could run. `docs/features/M0B-SPIKE-RESULTS.md` moves to step 11, written 
 **Goal:** The owner sees the module work end to end; a fresh session reviews it.
 **Owns:** `scripts/run_uat.py` (M0b journeys), `docs/uat/M0B-UAT.md` (new), `README.md` (job usage).
 **Subtasks:**
-1. Add journeys U-1 … U-4 (dossier §8) to `run_uat.py` where they can be automated; script the rest.
+1. Add journeys U-1 … U-3 (dossier §8) to `run_uat.py` where they can be automated; script the rest. U-4 (cloud)
+   waits for the deploy (D-15, 12 Nov 2026).
    `run_uat.py` creates the folders it writes: `get_settings()` no longer does (D-14a, 12 Nov 2026).
 2. Record results in `docs/uat/M0B-UAT.md`; the owner signs.
 3. Hand the branch to a fresh review session → `docs/reviews/M0B-REVIEW.md`.
 **Verify:** UAT file complete and signed; review file exists with a verdict.
-**Depends:** M0b.10
+**Depends:** M0b.10 landed (D-15)
