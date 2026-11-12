@@ -1,0 +1,13 @@
+# Handoff: M0b.17 (lane A)
+- Branch / checkout: feat/M0b-trustworthy-data-pipeline, /Users/mrrobot/Desktop/Projects/cricpulse
+- State: done
+- Colour: 🟡
+- What changed:
+  - docs/uat/M0B-UAT.md: new section "Re-run after the fix round (D-18)" before U-3 (U-3 line left as is: no new version)
+  - data/ (not tracked): the full-archive run downloaded the archive; no new version, no run.lock left
+- Verification run: `source .venv/bin/activate && GEMINI_API_KEY= python scripts/run_uat.py && grep -q "Re-run after the fix round" docs/uat/M0B-UAT.md && test ! -e data/run.lock` -> run_uat.py 8 of 8 PASS, grep found the section, data/run.lock absent; exit code 0
+- Done-when lines met: 1 (run: "Changed: 0 ... absent from archive: 0", "Up to date: v20261112T1811Z stays live", lock gone) met; 2 (run_uat 8 of 8 PASS) met; 3 (sheet section) met in docs/uat/M0B-UAT.md.
+- Proof: output only. Three lines: the full archive checked, nothing new, the live version stays v20261112T1811Z with 23,239 matches; the 8 checks pass on it; the lock file is gone.
+- Followed the code, not the card: none. (Run took 28 min, not about 10; the download was slow. Absent count was 0, so no ids to record.)
+- Open issues / decisions needed: none
+- Proposed commit: `docs(M0b): UAT re-run after the fix round, D-18 [M0b.17]` — trailer Module: M0b.17

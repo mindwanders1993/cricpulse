@@ -60,6 +60,25 @@ No new version, no second `runs/` file, 21.5 s (D-17d: held files are skipped).
 **`run_uat.py` on the new snapshot: PASSED 8 of 8** with the mock model, in 0.75 s. Scenario 8 reports
 `snapshot_version v20261112T1811Z` matches `LATEST.json`.
 
+## Re-run after the fix round (D-18)
+
+Builder runs: 12 to 13 Nov 2026, M0b.17, on the real `data/`, after M0b.15 (`434163d`) and M0b.16 (`f88ab7c`).
+
+```bash
+python -m src.publisher.main run --archive all_json    # 1
+GEMINI_API_KEY= python scripts/run_uat.py              # 2
+```
+
+**Run: PASSED.** Console: "CricPulse run v20261112T1906Z (source: all_json)"; both register files and the 149,036,509
+byte archive downloaded; "Changed: 0, parsed: 0, quarantined: 0, removed: 0, absent from archive: 0"; "Up to date:
+v20261112T1811Z stays live." No new version was published, so the live version stays `v20261112T1811Z`: 23,239 matches,
+11,739,043 deliveries (unchanged, never dropped), data to 2026-11-03. Cricsheet added no matches since 12 Nov.
+Absent count 0, so the log carries no absent ids. No new file in `data/runs/`. Time 28 min 3 s (nearly all of it the
+download, slower than the 9 min 56 s of the M0b.14 run). Lock check: `data/run.lock` does not exist afterwards.
+
+**`run_uat.py` on `LATEST.json` (`v20261112T1811Z`): PASSED 8 of 8** with the mock model, in 0.82 s. Scenario 8
+reports `snapshot_version v20261112T1811Z` matches `LATEST.json`.
+
 ## U-3 API on the new snapshot
 
 ```bash
