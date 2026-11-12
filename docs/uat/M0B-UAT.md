@@ -29,6 +29,37 @@ Record: match count never drops against U-1, `runs/<version>.json` readable, "up
 **Builder result: PASSED.** "Changed: 0, parsed: 0, quarantined: 0. Up to date: v20261112T1216Z stays live."
 Count stays 23,239 (never drops), no new version, 6.7 s. The run wrote no second `runs/` file (nothing changed).
 
+## Re-run after M0b.13 (D-17)
+
+Builder runs: 12 Nov 2026, M0b.14, on the real `data/`. U-1 and U-2 above stay as recorded.
+
+```bash
+python -m src.publisher.main run --archive all_json    # 1
+python -m src.publisher.main run --archive all_json    # 2, straight after
+GEMINI_API_KEY= python scripts/run_uat.py              # 3
+```
+
+**Run 1: PASSED.** Console: "match_quarantined ... player listed for both teams: KV Sharma (match_id 1130677)",
+"... J Butler (match_id 1229824)"; "Changed: 2, parsed: 0, quarantined: 2, removed: 0"; every quality gate passed
+(`never_shrinks_matches` 23239, `never_shrinks_deliveries` 11739043, `quarantine_bounded` 2); "Published
+v20261112T1811Z: 23239 matches, 11739043 deliveries, data to 2026-11-03". Version `v20261112T1811Z`, 23,239
+matches, 11,739,043 deliveries, time 9 min 56 s (nearly all of it the 149 MB download). `data/runs/v20261112T1811Z.json`
+lists both files under `quarantined`, each with action `not_loaded`.
+
+**Run 2: PASSED.** "Changed: 0, parsed: 0, quarantined: 0, removed: 0" and "Up to date: v20261112T1811Z stays live."
+No new version, no second `runs/` file, 21.5 s (D-17d: held files are skipped).
+
+**Error table** (`data/silver/quarantine.parquet`, read with polars), 2 rows, both `parser_version` 1 and
+`version` v20261112T1811Z:
+
+| match_id | error | action |
+|---|---|---|
+| 1130677 | ValueError: player listed for both teams: KV Sharma | not_loaded |
+| 1229824 | ValueError: player listed for both teams: J Butler | not_loaded |
+
+**`run_uat.py` on the new snapshot: PASSED 8 of 8** with the mock model, in 0.75 s. Scenario 8 reports
+`snapshot_version v20261112T1811Z` matches `LATEST.json`.
+
 ## U-3 API on the new snapshot
 
 ```bash
@@ -38,6 +69,7 @@ bash scripts/run_local.sh          # then, in the chat page http://127.0.0.1:800
 
 Owner question: "Who has scored the most runs in T20 internationals?" Expected: an answer with its numbers from
 the snapshot; `curl -s localhost:8000/ready` shows `snapshot_version` equal to `data/snapshots/LATEST.json`'s version.
+After the M0b.13 re-run, `/ready` should now show `v20261112T1811Z`.
 
 **Builder result: `run_uat.py` PASSED 8 of 8 on `v20261112T1216Z` (cutoff 2026-11-03), with the MOCK model.**
 Journeys: health and ready, batting and bowling leaderboards (top T20 batter JC Buttler, bowler SP Narine),

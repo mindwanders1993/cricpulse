@@ -1,0 +1,17 @@
+# Handoff: M0b.14 (A)
+- Branch / checkout: feat/M0b-trustworthy-data-pipeline, /Users/mrrobot/Desktop/Projects/cricpulse
+- State: done
+- Colour: 🟡
+- What changed:
+  - docs/uat/M0B-UAT.md: new section "Re-run after M0b.13 (D-17)" below U-2; one line added to U-3. Nothing else.
+  - data/ (not tracked): run 1 published v20261112T1811Z; run 2 changed nothing.
+- Verification run: `source .venv/bin/activate && GEMINI_API_KEY= python scripts/run_uat.py && grep -q "Re-run after M0b.13" docs/uat/M0B-UAT.md` -> "ALL UAT SCENARIOS PASSED 100% IN 0.75s" (8 of 8), exit code 0 (run after the last file change).
+- Done-when lines met:
+  - 1: 1130677 and 1229824 re-read, rejected, `not_loaded` in data/silver/quarantine.parquet; v20261112T1811Z with 23,239 matches, 11,739,043 deliveries; runs/v20261112T1811Z.json lists both with action. Met.
+  - 2: second run "Up to date: v20261112T1811Z stays live", Changed 0. Met.
+  - 3: run_uat.py 8 of 8, /ready names v20261112T1811Z. Met.
+  - 4: section and U-3 line recorded in docs/uat/M0B-UAT.md. Met.
+- Proof: A rejected match no longer reaches the app and is listed in the error table. / A second run in a row stops at "Up to date". / The test sheet shows both runs on the real archive. Colour 🟡. Output only (no screen changed, no recording).
+- Followed the code, not the card: none. (Run 1 console said "Changed: 2, parsed: 0, quarantined: 2"; matches the card.)
+- Open issues / decisions needed: none. The owner's untracked 08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md was left alone. Live-model key issue from U-3 is unchanged (mock used).
+- Proposed commit: `docs(M0b): UAT re-run on the real archive after D-17 [M0b.14]` — Module: M0b.14
