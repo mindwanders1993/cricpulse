@@ -38,6 +38,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 7 | M0b.12 Fix: a player listed twice in one match (D-16) | A | Opus · high | now: M0b.11's U-1 stopped at the gate |
 | 8 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 landed *(its cloud steps wait for the deploy, D-15)* and M0b.12 landed |
 | 9 | M0b.13 Fix: a match a newer parser rejects leaves the app; the error table (D-17) | A | Opus · **xhigh** | now: R-7 ruled, M0b.12 landed; before the review |
+| 10 | M0b.14 UAT refresh after D-17 | A | Sonnet · medium | M0b.13 landed; runs alone (it writes `data/`) |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -454,3 +455,28 @@ of the proof's `git status` check.
 reads or writes `data/`. The full build on the real archive is re-run after landing (UAT U-1/U-2 refresh), not by
 this card.
 **Depends:** D-17 ruled; M0b.12 landed
+
+---
+
+### M0b.14 — UAT refresh after D-17
+**Goal:** The test sheet shows the run as it is now, on the real archive: the two bad matches sit in the error table
+and a second run in a row stops "up to date".
+**Why:** M0b.13 (`eb9e3a8`) changed the run after U-1 and U-2 were recorded.
+**Colour:** 🟡 (runs the real pipeline on `data/`; changes no `src/` file)
+**Owns:** `docs/uat/M0B-UAT.md`. The runs write under `data/` as the nightly job does; that is this card's only write
+there, and it runs alone. The untracked `08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` is the owner's: leave it alone and out
+of the proof's `git status` check.
+**Subtasks:**
+1. `python -m src.publisher.main run --archive all_json` on the existing `data/`. Expected: the two D-16c files
+   (1130677, 1229824) are read again, rejected and written to `data/silver/quarantine.parquet` as `not_loaded`; a new
+   version publishes with 23,239 matches (never fewer); its `runs/<version>.json` lists both with their action.
+2. The same command again. Expected: "Up to date", the version from 1 stays live (D-17d: held files are skipped).
+3. `GEMINI_API_KEY= python scripts/run_uat.py` on the new snapshot.
+4. In `docs/uat/M0B-UAT.md`, add a section "Re-run after M0b.13 (D-17)" below U-2: the commands, each run's console
+   lines, version, match and delivery counts, time, and the error table's rows (from a read-only query of
+   `data/silver/quarantine.parquet`, for example with polars). Add one line to U-3 saying `/ready` should now show
+   the new version. Change nothing else in the sheet; the U-1 and U-2 results stay as recorded.
+**Verify:** `source .venv/bin/activate && GEMINI_API_KEY= python scripts/run_uat.py && grep -q "Re-run after M0b.13" docs/uat/M0B-UAT.md`
+**Done when:** 1–4 recorded as expected. Anything different (the count drops, the second run publishes again, the
+rows are not `not_loaded`, a gate fails) → BLOCKED with the output; fix nothing.
+**Depends:** M0b.13 landed

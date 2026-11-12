@@ -13,7 +13,7 @@
 | **Goal** | A nightly job that turns Cricsheet files into a new, versioned DuckDB snapshot — and can never shrink, corrupt or empty the live data. |
 | **Fixes** | Blocking bugs 1 and 2 from `08 §9`, and the data half of bug 3. |
 | **Done when** | (1) Two runs in a row never lose a match. (2) A bad file or a failed gate leaves the live snapshot untouched. (3) The API serves the run's snapshot locally; on Cloud Run at the deploy, after the owner's final local testing (D-15). |
-| **Size** | 13 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 added 12 Nov 2026, D-17) |
+| **Size** | 14 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 and M0b.14 added 12 Nov 2026, D-17) |
 | **Risk** | Memory and time of the first full build — measured first (M0b.1) |
 
 ---
@@ -331,5 +331,6 @@ refusal and cursors). Whichever lands second rebases.
 | M0b.11 | UAT + review hand-off | A |
 | M0b.12 | Fix: a player listed twice in one match (D-16) | A |
 | M0b.13 | Fix: a match a newer parser rejects leaves the app; the error table (D-17) | A |
+| M0b.14 | UAT refresh after D-17 | A |
 
 Cards with subtasks and Verify steps: `M0B-TASK-CARDS.md`.
