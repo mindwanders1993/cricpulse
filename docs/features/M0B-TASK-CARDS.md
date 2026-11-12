@@ -35,7 +35,8 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 4 | M0b.7 Publish | B | Opus · **xhigh** | M0b.6 committed |
 | 5 | M0b.8 Pipeline entry + integration test + cleanup | A | Opus · **xhigh** | M0b.5 and M0b.7 committed; lane B merged |
 | 6 | M0b.10 Cloud + D-3 measurement | A + owner | Opus · **xhigh** *(was high; 12 Nov 2026: it now changes the run)* | M0b.8 committed |
-| 7 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 landed *(its cloud steps wait for the deploy, D-15)* |
+| 7 | M0b.12 Fix: a player listed twice in one match (D-16) | A | Opus · high | now: M0b.11's U-1 stopped at the gate |
+| 8 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 landed *(its cloud steps wait for the deploy, D-15)* and M0b.12 landed |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -339,7 +340,7 @@ steps 8–12 wait for the deploy (D-15).
 ### M0b.11 — UAT and review hand-off
 **Goal:** The owner sees the module work end to end on the laptop; a fresh session reviews it.
 **Correction** *(governor, 12 Nov 2026, before the builder started)*: `scripts/run_uat.py` no longer runs. It
-imports the match and register parsers M0b.8 removed, opens the old `published/cricket_latest.duckdb`, and calls the
+opens the old `published/cricket_latest.duckdb`, builds its own database under `data/`, and calls the
 sync endpoint M0b.9 removed. **Split:** the builder does 1–3; the owner walks and signs (4); the governor sends the
 branch to a fresh review (5). Cloud U-4 waits for the deploy (D-15).
 **Colour:** 🟡 (the UAT script; the builder runs the real pipeline on `data/` but changes no `src/` file)
@@ -362,4 +363,32 @@ branch to a fresh review (5). Cloud U-4 waits for the deploy (D-15).
 5. *Governor:* a fresh review session → `docs/reviews/M0B-REVIEW.md` (`kensa`).
 **Verify (builder):** `source .venv/bin/activate && ruff check src tests scripts/run_uat.py && ruff format --check src tests scripts/run_uat.py && python -m pytest -q && python scripts/run_uat.py && test -f docs/uat/M0B-UAT.md && grep -q "U-4" docs/uat/M0B-UAT.md`
 **Done when:** 1–3 landed; the owner signed `M0B-UAT.md`; `M0B-REVIEW.md` has a verdict.
-**Depends:** M0b.10 landed (D-15)
+**Depends:** M0b.10 landed (D-15), M0b.12 landed (D-16)
+**Blocked note 1** *(12 Nov 2026)*: U-1 stopped at the gate `player_match_grain_uniqueness` (2 duplicate rows; 23,241
+matches parsed, 0 quarantined, nothing published). Subtasks 1–3 are written and wait, unlanded, in the tree; the
+builder resumes after M0b.12 lands: re-run U-1, U-2, `run_uat.py`, fill `M0B-UAT.md`.
+
+---
+
+### M0b.12 — Fix: a player listed twice in one match
+**Goal:** The full build on all files passes every gate, so the first real snapshot is published.
+**Why:** M0b.11's U-1 stopped at `player_match_grain_uniqueness`: "Duplicate (match_id, player_id) detected in
+fact_player_match (got: 2)". The gate stays (D-16).
+**Colour:** 🟡 (the match parse; no red-zone file)
+**Owns:** `src/parsers/match_parser.py`, `tests/test_match_parser.py`, new fixture files under `tests/fixtures/`.
+The tree also holds M0b.11's unlanded files (`scripts/run_uat.py`, `docs/uat/M0B-UAT.md`, `README.md`,
+`.agents/handoffs/M0b.11.md`): leave them alone and leave them out of the proof's `git status` check.
+**Subtasks:**
+1. Find the two pairs: one read-only DuckDB query over `data/silver/` (`match_players`), already built by M0b.11's
+   run, grouping by `match_id, player_id` with `COUNT(*) > 1`. The only read of `data/` this card allows; nothing is
+   written there. Then read those matches' `info.players` and `info.registry` in the zip under `data/bronze/`. Name
+   each pair in the handoff note: match id, player name, team(s), and which D-16 cause it is.
+2. Fix by cause, as D-16 rules: (a) fix the code; (b) keep one row; (c) raise in the parse with the message
+   "player listed for both teams: <name>", so the archive reader quarantines the match (D-5); (d) BLOCKED with the
+   rows.
+3. A regression test per cause found, on a small fixture made from the real case (names may be kept; they are
+   public Cricsheet data).
+**Verify:** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_match_parser.py -q && python -m pytest -q`
+**Done when:** both pairs named with their cause; each cause has a test; the full suite passes. The full build
+itself is re-run by M0b.11.
+**Depends:** M0b.11 blocked note 1
