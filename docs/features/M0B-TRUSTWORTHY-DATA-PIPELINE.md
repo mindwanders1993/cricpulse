@@ -276,6 +276,7 @@ refusal and cursors). Whichever lands second rebases.
 | R-4 | A Cricsheet revision removes a whole match | Never-delete rule + Sunday absence log |
 | R-5 | Silver schema drift when M1 adds columns | `UNION ALL BY NAME`; M1 bumps `PARSER_VERSION` to rebuild Silver |
 | R-6 | `dim_venue` derived with plain `INSERT` (D-9/D-10) fails if one venue name appears with two cities in real data | Confirmed by M0b.8 (4 Nov 2026): 66 venues. **Ruled D-11**; M0b.8 implements it in `_derive_venue_and_team` with a test |
+| R-7 | A match already in Silver that later fails to parse keeps its old Silver rows, and they reach Gold: the merge replaces only staged matches, and a quarantined match is never staged (found by M0b.12, 12 Nov 2026). A failed run also leaves Silver and the manifest written before the gates, so the next run skips those files | **Open; ruled before the M0b review.** Today it showed up once: M0b.11's failed full build left both D-16 matches in Silver. Nothing had been published, so that Silver is set aside and rebuilt (M0b.11 blocked note 1). The question to rule: when a parser change newly rejects an unchanged file, drop its Silver rows; when a new revision of a file fails, keep the last good rows |
 | Q-1 | Should a failed nightly run alert someone? | Proposed: Cloud Run job failure → email alert (free). Confirm in M0b.10. |
 
 ---

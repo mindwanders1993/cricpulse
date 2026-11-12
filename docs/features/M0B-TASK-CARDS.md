@@ -366,7 +366,9 @@ branch to a fresh review (5). Cloud U-4 waits for the deploy (D-15).
 **Depends:** M0b.10 landed (D-15), M0b.12 landed (D-16)
 **Blocked note 1** *(12 Nov 2026)*: U-1 stopped at the gate `player_match_grain_uniqueness` (2 duplicate rows; 23,241
 matches parsed, 0 quarantined, nothing published). Subtasks 1–3 are written and wait, unlanded, in the tree; the
-builder resumes after M0b.12 lands: re-run U-1, U-2, `run_uat.py`, fill `M0B-UAT.md`.
+builder resumes after M0b.12 lands: first move the failed run's `data/silver/` aside to
+`data/silver.failed-20261112/` (it still holds the two D-16 matches, dossier R-7; nothing was published; the owner's
+yes is needed), then re-run U-1, U-2, `run_uat.py`, fill `M0B-UAT.md`.
 
 ---
 
