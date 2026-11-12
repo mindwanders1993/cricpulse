@@ -337,13 +337,29 @@ steps 8–12 wait for the deploy (D-15).
 ---
 
 ### M0b.11 — UAT and review hand-off
-**Goal:** The owner sees the module work end to end; a fresh session reviews it.
-**Owns:** `scripts/run_uat.py` (M0b journeys), `docs/uat/M0B-UAT.md` (new), `README.md` (job usage).
+**Goal:** The owner sees the module work end to end on the laptop; a fresh session reviews it.
+**Correction** *(governor, 12 Nov 2026, before the builder started)*: `scripts/run_uat.py` no longer runs. It
+imports the match and register parsers M0b.8 removed, opens the old `published/cricket_latest.duckdb`, and calls the
+sync endpoint M0b.9 removed. **Split:** the builder does 1–3; the owner walks and signs (4); the governor sends the
+branch to a fresh review (5). Cloud U-4 waits for the deploy (D-15).
+**Colour:** 🟡 (the UAT script; the builder runs the real pipeline on `data/` but changes no `src/` file)
+**Owns:** `scripts/run_uat.py`, `docs/uat/M0B-UAT.md` (new), `README.md` (how to run the job locally).
 **Subtasks:**
-1. Add journeys U-1 … U-3 (dossier §8) to `run_uat.py` where they can be automated; script the rest. U-4 (cloud)
-   waits for the deploy (D-15, 12 Nov 2026).
-   `run_uat.py` creates the folders it writes: `get_settings()` no longer does (D-14a, 12 Nov 2026).
-2. Record results in `docs/uat/M0B-UAT.md`; the owner signs.
-3. Hand the branch to a fresh review session → `docs/reviews/M0B-REVIEW.md`.
-**Verify:** UAT file complete and signed; review file exists with a verdict.
+1. `run_uat.py` opens the snapshot `LATEST.json` names, the way the API does (`create_app()` with no path, M0b.9).
+   No `LATEST.json` → it prints "no snapshot yet: run `python -m src.publisher.main run` first" and exits 1. It no
+   longer builds a fixture database or imports removed modules, and it writes nothing under `data/`. The sync
+   scenario goes; a new one checks `/ready` reports `snapshot_version` equal to `LATEST.json`'s version (U-3). The
+   other scenarios stay unless they test something M0b removed; any dropped is listed in the handoff note.
+2. `docs/uat/M0B-UAT.md`: U-1 (`python -m src.publisher.main run --archive all_json`) and U-2 (a second `run`) as
+   exact commands with what to record: match count, snapshot size, time, `runs/<version>.json` readable, counts never
+   drop. The builder runs U-1, U-2, then `run_uat.py`, once each, on the real `data/` (alone, per the Kaizen card),
+   and records the results: snapshot version and cutoff, live or mock model, journeys, invariants seen. U-3 has one
+   chat question for the owner to ask on `scripts/run_local.sh`. U-4 reads "waits for the deploy (D-15)". The owner
+   sign-off line is left blank.
+3. `README.md`: how to run the job locally (`run`, `ingest-local`, `bench`); the cloud steps are
+   `scripts/infra_m0b.sh`, run at the deploy (D-15).
+4. *Owner:* asks the U-3 question in the chat and signs `M0B-UAT.md`.
+5. *Governor:* a fresh review session → `docs/reviews/M0B-REVIEW.md` (`kensa`).
+**Verify (builder):** `source .venv/bin/activate && ruff check src tests scripts/run_uat.py && ruff format --check src tests scripts/run_uat.py && python -m pytest -q && python scripts/run_uat.py && test -f docs/uat/M0B-UAT.md && grep -q "U-4" docs/uat/M0B-UAT.md`
+**Done when:** 1–3 landed; the owner signed `M0B-UAT.md`; `M0B-REVIEW.md` has a verdict.
 **Depends:** M0b.10 landed (D-15)
