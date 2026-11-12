@@ -4,7 +4,7 @@
 shrink, corrupt or empty the live data. The API serves whichever snapshot `snapshots/LATEST.json` names.
 
 **PR title:** `feat(M0b): trustworthy data pipeline — versioned snapshots that never shrink, Silver + manifest, quality gates, error table, run lock`
-**Target:** `dev` · **Branch:** `feat/M0b-trustworthy-data-pipeline` at `95a1138` (42 commits) · **Colour:** 🔴
+**Target:** `dev` · **Branch:** `feat/M0b-trustworthy-data-pipeline` (code and gate at `95a1138`; this note is the last commit) · **Colour:** 🔴
 
 ## What changed, in the app's words
 
