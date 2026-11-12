@@ -37,6 +37,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 6 | M0b.10 Cloud + D-3 measurement | A + owner | Opus · **xhigh** *(was high; 12 Nov 2026: it now changes the run)* | M0b.8 committed |
 | 7 | M0b.12 Fix: a player listed twice in one match (D-16) | A | Opus · high | now: M0b.11's U-1 stopped at the gate |
 | 8 | M0b.11 UAT + review hand-off | A | Sonnet · medium | M0b.10 landed *(its cloud steps wait for the deploy, D-15)* and M0b.12 landed |
+| 9 | M0b.13 Fix: a match a newer parser rejects leaves the app; the error table (D-17) | A | Opus · **xhigh** | now: R-7 ruled, M0b.12 landed; before the review |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -397,3 +398,53 @@ The tree also holds M0b.11's unlanded files (`scripts/run_uat.py`, `docs/uat/M0B
 **Done when:** both pairs named with their cause; each cause has a test; the full suite passes. The full build
 itself is re-run by M0b.11.
 **Depends:** M0b.11 blocked note 1
+
+---
+
+### M0b.13 — Fix: a match a newer parser rejects leaves the app; the error table
+**Goal:** A match that turns out bad after it went live leaves the app on the next run, and every rejected file
+sits in one error table a person works through by hand.
+**Why:** dossier R-7, ruled D-17 (12 Nov 2026). Today a rejected match is never staged, so the merge keeps its old
+Silver rows and they reach Gold.
+**Colour:** 🔴 (`src/publisher/`)
+**Owns:** `src/publisher/archive.py`, `src/publisher/silver.py`, `src/publisher/manifest.py`,
+`src/publisher/quality_gates.py`, `src/publisher/main.py`, new `src/publisher/quarantine.py`;
+`tests/test_archive.py`, `tests/test_silver.py`, `tests/test_manifest.py`, `tests/test_quality_gates.py`,
+`tests/test_pipeline.py`, new `tests/test_quarantine.py`; new fixture files under `tests/fixtures/`.
+The untracked `08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` at the root is the owner's: leave it alone and leave it out
+of the proof's `git status` check.
+**Subtasks:**
+1. **The error table** `silver/quarantine.parquet` (D-17c), in `src/publisher/quarantine.py`: load (empty when
+   missing), upsert, drop the rows of ids that parsed cleanly, save by `*.tmp` then rename. One row per match id:
+   `match_id`, `file_sha256`, `parser_version`, `error`, `action` (`removed` | `kept_last_good` | `not_loaded`),
+   `version` (the run that set `action`). A `removed` row keeps `action` and `version` until its file parses
+   cleanly, because the match is no longer in Silver.
+2. **The reader** records each rejected file's sha, and skips a file whose (id, sha, `PARSER_VERSION`) the error
+   table already holds, unless `--reparse-all` (D-17d), in both `archive.iter_changed` and `main._iter_changed_dir`.
+   `RunState.quarantined` keeps its `(match_id, error)` shape and `iter_changed` keeps its four arguments working:
+   `tests/test_match_parser.py` and `tests/test_loader_and_schema.py` use them and are not this card's. Add the sha
+   and the error table beside them.
+3. **Classify** each rejected file against the manifest (D-17a, b): same sha as its manifest row → `removed`; another
+   sha → `kept_last_good`; no manifest row → `not_loaded`.
+4. **Remove** (D-17a, f): `silver.py` gets a removal that drops the ids' rows from every Silver table by `*.tmp` then
+   rename, checks the match count fell by exactly those ids, and runs even when nothing was staged. Their manifest
+   rows go. A run that crashes part-way through a removal is finished by the next run, the way D-12(c)'s staging
+   marker finishes a merge today (the planned removals may travel in that marker, written even when nothing parsed).
+5. **Gates and "up to date"** (D-17e): `never_shrinks_matches` passes when `match_count ≥ previous.match_count −
+   removed`, where `removed` counts the error table's `removed` rows whose `version` is newer than `LATEST.json`'s,
+   so a retry after a failed run still passes; any other drop still fails; the deliveries gate is unchanged. The
+   gate's result names `removed`. "Up to date" also needs no error-table row newer than `LATEST.json`'s version.
+6. **Report:** `runs/<version>.json` lists each rejected file with its `action`; the console line adds the removed
+   count. `PARSER_VERSION` stays 1 (D-17g).
+7. **Tests**, one per line, on fixtures in temp dirs (a monkeypatched parser or `PARSER_VERSION` may stand in for a
+   parser change): an unchanged file newly rejected leaves every Silver table and the manifest, Gold lacks it, the
+   run publishes, the error table and the report name it `removed` · a rejected new revision keeps the old rows,
+   `kept_last_good` · a rejected new id is `not_loaded` · a second run in a row with the same rejected file stops
+   "up to date" · a file that later parses cleanly leaves the table and is back in Gold · a retry after a gate
+   failure that followed a removal passes `never_shrinks_matches` · any other drop still fails it · a crash between
+   the Silver removal and the manifest write is finished by the next run · `--reparse-all` retries rejected files.
+**Verify:** `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_quarantine.py tests/test_archive.py tests/test_silver.py tests/test_manifest.py tests/test_quality_gates.py tests/test_pipeline.py -q && python -m pytest -q`
+**Done when:** each D-17 line (a)–(f) has a passing test named in the handoff note; the full suite passes; no test
+reads or writes `data/`. The full build on the real archive is re-run after landing (UAT U-1/U-2 refresh), not by
+this card.
+**Depends:** D-17 ruled; M0b.12 landed

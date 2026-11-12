@@ -13,7 +13,7 @@
 | **Goal** | A nightly job that turns Cricsheet files into a new, versioned DuckDB snapshot — and can never shrink, corrupt or empty the live data. |
 | **Fixes** | Blocking bugs 1 and 2 from `08 §9`, and the data half of bug 3. |
 | **Done when** | (1) Two runs in a row never lose a match. (2) A bad file or a failed gate leaves the live snapshot untouched. (3) The API serves the run's snapshot locally; on Cloud Run at the deploy, after the owner's final local testing (D-15). |
-| **Size** | 12 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16) |
+| **Size** | 13 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 added 12 Nov 2026, D-17) |
 | **Risk** | Memory and time of the first full build — measured first (M0b.1) |
 
 ---
@@ -82,6 +82,7 @@ API endpoint /internal/sync-daily                  Cloud Run Job (separate proce
 | D-14 | The cloud start-up (M0b.10 blocked note 1) | **(a) The API never creates folders:** `get_settings()` stops calling `ensure_directories()`; `run` and `ingest-local` call it themselves; the service and the bench job get `TMP_DIR=/tmp/cricpulse` like the job. **(b) Permissions per resource, never project-wide:** `setup` makes the bucket, the two accounts, the API account's access to the `GEMINI_API_KEY` secret and the failure alert; `first-build` grants the job's account the right to update the API service only and the schedules' right to start the job only, runs the full build, and creates the two schedules only after it succeeds. **(c) The rollout waits** until the new revision is ready and fails the run if it is not; an equal version on a newest revision that is not ready also fails the run (confirmed from M0b.10's handoff) | (a) skip folders it cannot create; or write empty folder markers into the bucket. (b) project-wide `run.developer` for the job's account; schedules made in `setup`. (c) return as soon as Cloud Run accepts the change | Ruled by the governor, 12 Nov 2026 — instead of (a) skipping, because it hides real errors, or markers, because the API dies whenever one is missing; (b) project-wide rights, because the Google Cloud project may hold other apps and the job reads downloaded files — and early schedules, because a nightly 7-day run before the first full build would publish a snapshot with one week of matches; (c) returning early, because a revision that fails to start would leave the API silently on the old snapshot, the gap D-13a closes |
 | D-15 | When do the cloud steps run? | **Local first.** The cloud code is landed (M0b.10, `a4ad996`), but nothing goes to Google Cloud until the owner's final local end-to-end testing passes; the owner starts the deploy. M0b closes on local proof: done-when (1) and (2), and the API serving the run's snapshot on the laptop (UAT U-1 … U-3). M0b.10's owner steps 8–12, UAT U-4 and the D-3 bench wait for the deploy. Watch: `deploy.yml` deploys on every push to `main`, so merging into `main` is the deploy | Run M0b.10's steps 8–12 now, as its card planned | Ruled by the owner, 12 Nov 2026 — instead of deploying now, because the owner wants the app proven end to end on the laptop first, so a later cloud failure is a cloud problem only |
 | D-16 | The full build stopped at a gate: two duplicate (match_id, player_id) rows in `fact_player_match` (M0b.11 U-1, 12 Nov 2026; nothing published) | **The gate stays; a duplicate never reaches Gold.** M0b.12 finds the rows, then by cause: **(a)** our bug (for example two players given the same id by the name fallback) → fix the code; **(b)** the same name listed twice for one team → keep one row, since an exact repeat carries nothing; **(c)** one player listed for both teams → quarantine that match with the reason "player listed for both teams" (D-5 path); **(d)** anything else → BLOCKED with the rows | Loosen the gate; or pick one team for (c) | Ruled by the governor, 12 Nov 2026 — instead of loosening the gate, because it just did its job (bad rows, nothing published); instead of picking a team in (c), because a wrong pick puts a player's runs on the other side, while a quarantined match is bounded and shown in the run report |
+| D-17 | A match already in Silver is rejected on a later run (R-7, found by M0b.12) | **(a) Same file, rejected by a newer parser** (its sha equals its manifest row's) **→ remove it:** its rows leave every Silver table and its manifest row goes, so Gold and the app lose it. **(b) A new revision of the file is rejected → keep the last good rows** in Silver and the manifest. **(c) The error table** `silver/quarantine.parquet`: one row per rejected file — match id, sha, parser version, reason, what happened (`removed`, `kept_last_good`, or `not_loaded` for a new id) and the run that set it; the run report lists the same. A person fixes each by hand (a parser fix, or Cricsheet's next revision); a row leaves when its file parses cleanly. **(d)** A file whose (id, sha, `PARSER_VERSION`) the error table already holds is skipped like a current manifest row; `--reparse-all` retries it. **(e)** `never_shrinks_matches` allows exactly the matches removed since the live snapshot; any other drop still fails; the deliveries gate is unchanged. "Up to date" (D-12a) also needs no error-table row newer than `LATEST.json`'s version. **(f)** Removal is crash-safe like the merge: `*.tmp` then rename, and a crashed run's removals are finished by the next run (D-12c). **(g)** A parser change that rejects files it once accepted bumps `PARSER_VERSION`, so it reaches files already in Silver; M0b keeps 1, because every Silver today was built after D-16c. A failed gate still leaves Silver ahead of `LATEST.json`; D-12a already makes the next run rebuild and fail loudly until it is fixed | (a) keep the old rows until the file changes; or stop the run until a person approves each removal. (b) remove the match. (d) re-read every rejected file on every run. (e) loosen the gate by a fixed margin | Ruled by the owner, 12 Nov 2026, for (a) and (c): "remove it, report it and save it in an error table which we fix manually" — instead of keeping the old numbers, because rows a newer parser rejects can show wrong numbers or break a gate on every run (D-16's duplicate did); instead of waiting for approval, because one bad match would hold back every new match. Ruled by the governor, same day, for the rest — instead of (b) removing, because the last revision was good and one broken upload would take a whole match away; (d) re-reading, because a rejected file in the 7-day archive, and every rejected file on a Sunday full run, would rebuild and publish a snapshot with nothing new; (e) a margin, because it would also let a real loss through |
 | D-8 | Snapshot version name | **`v20261026T0230Z`** (UTC, sortable, one per run) | Date only (collides on re-runs) | Approved as recommended, 26 Oct |
 
 ---
@@ -120,6 +121,7 @@ bronze/registers/<YYYY-MM-DD>/{people,names}.csv
 bronze/cricsheet/<YYYY-MM-DD>/<archive>.zip
 silver/<table>.parquet            # matches, innings, deliveries, wickets, match_players
 silver/manifest.parquet
+silver/quarantine.parquet         # the error table: every rejected file (D-17)
 silver/_staging/<version>/<table>/part-<n>.parquet   # deleted after merge
 snapshots/cricket_<version>.duckdb
 snapshots/LATEST.json
@@ -144,6 +146,8 @@ not on a FUSE mount.
 - **Never delete** a match because it is missing from an archive. A Sunday full run logs ids present in
   the manifest but absent from `all_json`; a person decides.
 - `PARSER_VERSION` lives in `src/parsers/match_parser.py`. M1 bumps it to re-parse everything.
+- **Rejected files** go to the error table instead (D-17): skipped while their (id, sha, `PARSER_VERSION`) is
+  unchanged; a match a newer parser rejects leaves Silver and the manifest.
 
 ### 5.4 Silver merge (DuckDB, streaming, bounded memory)
 
@@ -174,7 +178,7 @@ COPY (
 
 | Gate | Rule | Needs |
 |---|---|---|
-| `never_shrinks_matches` | `match_count ≥ previous.match_count` | previous `LATEST.json` (skipped on the first run) |
+| `never_shrinks_matches` | `match_count ≥ previous.match_count − removed`, where `removed` counts the error table's `removed` rows newer than `previous` (D-17e) | previous `LATEST.json` (skipped on the first run) |
 | `never_shrinks_deliveries` | `delivery_count ≥ 0.999 × previous.delivery_count` | same |
 | `quarantine_bounded` | quarantined ≤ `max(5, 1% of the run's files)` | run state |
 | existing seven gates | unchanged | — |
@@ -260,6 +264,7 @@ prune: keep the newest 7 snapshots (never the one LATEST names)
 | `Dockerfile`, `.github/workflows/deploy.yml`, `scripts/infra_m0b.sh` | job + schedule + mount | M0b.10 |
 | `src/publisher/rollout.py` | NEW: bump the API's `SNAPSHOT_VERSION` via the Cloud Run Admin API (REST) | M0b.10 |
 | `scripts/run_uat.py`, `docs/uat/M0B-UAT.md` | UAT | M0b.11 |
+| `src/publisher/quarantine.py` (NEW: the error table), `archive.py`, `silver.py`, `manifest.py`, `quality_gates.py`, `main.py` | a rejected match leaves Silver; the error table (D-17) | M0b.13 |
 
 **Overlap with M0a:** both touch `src/api/app.py` (M0b: one line to call the resolver; M0a: start-up
 refusal and cursors). Whichever lands second rebases.
@@ -276,7 +281,7 @@ refusal and cursors). Whichever lands second rebases.
 | R-4 | A Cricsheet revision removes a whole match | Never-delete rule + Sunday absence log |
 | R-5 | Silver schema drift when M1 adds columns | `UNION ALL BY NAME`; M1 bumps `PARSER_VERSION` to rebuild Silver |
 | R-6 | `dim_venue` derived with plain `INSERT` (D-9/D-10) fails if one venue name appears with two cities in real data | Confirmed by M0b.8 (4 Nov 2026): 66 venues. **Ruled D-11**; M0b.8 implements it in `_derive_venue_and_team` with a test |
-| R-7 | A match already in Silver that later fails to parse keeps its old Silver rows, and they reach Gold: the merge replaces only staged matches, and a quarantined match is never staged (found by M0b.12, 12 Nov 2026). A failed run also leaves Silver and the manifest written before the gates, so the next run skips those files | **Open; ruled before the M0b review.** Today it showed up once: M0b.11's failed full build left both D-16 matches in Silver. Nothing had been published, so that Silver is set aside and rebuilt (M0b.11 blocked note 1). The question to rule: when a parser change newly rejects an unchanged file, drop its Silver rows; when a new revision of a file fails, keep the last good rows |
+| R-7 | A match already in Silver that later fails to parse keeps its old Silver rows, and they reach Gold: the merge replaces only staged matches, and a quarantined match is never staged (found by M0b.12, 12 Nov 2026). A failed run also leaves Silver and the manifest written before the gates, so the next run skips those files | **Ruled D-17** (12 Nov 2026); M0b.13 implements it. It showed up once: M0b.11's failed full build left both D-16 matches in Silver; nothing had been published, so that Silver was set aside and rebuilt |
 | Q-1 | Should a failed nightly run alert someone? | Proposed: Cloud Run job failure → email alert (free). Confirm in M0b.10. |
 
 ---
@@ -316,5 +321,6 @@ refusal and cursors). Whichever lands second rebases.
 | M0b.10 | Cloud: job, schedule, mount, rollout; settle D-3 — code landed; cloud steps at the deploy (D-15) | A (with owner) |
 | M0b.11 | UAT + review hand-off | A |
 | M0b.12 | Fix: a player listed twice in one match (D-16) | A |
+| M0b.13 | Fix: a match a newer parser rejects leaves the app; the error table (D-17) | A |
 
 Cards with subtasks and Verify steps: `M0B-TASK-CARDS.md`.
