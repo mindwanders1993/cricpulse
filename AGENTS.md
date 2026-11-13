@@ -12,8 +12,11 @@
    audit against the card's "Owns", re-run Verify, commit by name with the `Module:` trailer.
 3. **Build sessions are read-only on git** (`status`, `diff`, `log`, `check-ignore`) and end with a handoff note at
    `.agents/handoffs/<task-id>.md`.
-4. **Local git only.** No session pushes, opens or merges a Pull Request. `kura` drafts the commands; **the owner pushes
-   and merges**, and `dev → main` only from the GitHub Web UI. Enforced by `.claude/settings.json`.
+4. **Sessions push; the owner merges** (owner, 13 Nov 2026, from kaizencodes). On the owner's yes, `kura` pushes the
+   module branch, opens its pull request into `dev` and watches the checks. No session merges a pull request, pushes
+   to `dev` or `main`, force-pushes or skips a hook. **The owner merges in the GitHub web UI**, and `dev → main`
+   only there. Instead of local git only (3 Nov 2026), because the owner then ran every push and pull request by
+   hand. Enforced by `.claude/settings.json` and `.githooks/pre-push`.
 5. **No AI attribution** in any commit — no `Co-Authored-By`, no "Generated with". Enforced by `.githooks/commit-msg`.
 6. **One yes per lane:** the owner's yes to a lane's first commit covers later commits on that lane's branch. A new
    branch or worktree still asks.
@@ -51,7 +54,7 @@
 | `shiken` | **Tester.** Runs the suite and the evals; never weakens a test. | `pytest` |
 | `kensa` | **Reviewer.** One review per module in a fresh session; three passes; writes `docs/reviews/`. | `review M0b` |
 | `gemba` | **UAT.** Walks the chat journeys on the real service; writes `docs/uat/`. | `gemba M0b` |
-| `kura` | **Git.** Worktrees, audit, local commits, lane merges; drafts push and PR for the owner. | `land M0b.2` · `merge lane B` |
+| `kura` | **Git.** Worktrees, audit, local commits, lane merges; on the owner's yes pushes, opens the PR and watches its checks. | `land M0b.2` · `merge lane B` |
 | `hansei` | **Reflection.** End of module: what went wrong twice, at most one change. | `hansei` |
 | `dojo` | Local environment: server, data directory, Docker, settings. | `dojo` |
 | `invariants` · `catalog-first` | Rule books, loaded inside sessions. | — |
@@ -72,8 +75,8 @@
 - **Proof:** none, output only
 - **Red zones (🔴):** `src/publisher/` (archive, Silver merge, quality gates, publish, `LATEST.json`, prune, the run) · `src/snapshot.py` · `src/ai/guardrails.py` (the one door) · `src/config.py` and secrets · any path built under `settings.data_dir`
 - **New checkout:** `python -m venv .venv && .venv/bin/pip install -e ".[dev]"`; the owner copies `.env` (git does not carry it; never read it)
-- **Git:** local commits through `kura`, from the governor or a fresh session, on the owner's yes (one yes per lane) · **never push, never open or merge a PR:** `kura` drafts `git push -u origin <module branch>` and `gh pr create --base dev --body-file .agents/handoffs/<module>.md`; the owner runs them and merges, `dev → main` only in the GitHub web UI · base branch `dev` · module branch `feat/<module>-<name>` · lanes `feat/<module>-<lane>` in `../cricpulse-<module>-<lane>` · trailer `Module: <task-id>` · attribution none · hooks `.githooks/` (`commit-msg`: conventional message, no attribution; `pre-commit`: ruff) · push and PR denied in `.claude/settings.json` · landing gate: the card's Verify, then Checks and the full Tests · gh login: none, no session calls `gh`
-- **CI:** none for sessions; GitHub Actions `.github/workflows/ci.yml` runs on the owner's push
+- **Git:** local commits through `kura`, from the governor or a fresh session, on the owner's yes (one yes per lane) · **push and pull request through `kura`, on the owner's yes** (boundary 4; owner contract §6): preflight `gh auth status` (not logged in → the owner types `! gh auth login`), then `git push -u origin <module branch>` and `gh pr create --base dev --title "<title>" --body-file .agents/handoffs/<module>.md` · **never:** merge a PR, push to `dev` or `main`, force-push, `--no-verify` · the owner merges in the GitHub web UI (squash or merge commit), `dev → main` only there · a module branch starts from GitHub's `dev` (`git fetch origin && git switch -c feat/<module>-<name> origin/dev`), never from a merged branch; local `dev` only follows `origin/dev`, and after a squash merge `kura` resets it to `origin/dev` · base branch `dev` · module branch `feat/<module>-<name>` · lanes `feat/<module>-<lane>` in `../cricpulse-<module>-<lane>` · trailer `Module: <task-id>` · attribution none · hooks `.githooks/` (`commit-msg`: conventional message, no attribution; `pre-commit`: ruff; `pre-push`: refuses `dev` and `main`, then Checks and the full Tests) · `.claude/settings.json` denies merge, force-push, `--no-verify` and pushes to `dev`/`main` · landing gate: the card's Verify, then Checks and the full Tests
+- **CI:** GitHub Actions `.github/workflows/ci.yml` (ruff and pytest on Python 3.11–3.13) on every pull request into `dev` or `main` · after a push or a new pull request `kura` watches `gh pr checks <number> --watch` and tells the owner one line: passed, or failed at <step> because <reason>
 - **Builders:** normal `opus`/`high` · 🔴 `opus`/`xhigh` · mechanical (documents, running suites and UAT) `sonnet`/`medium` · a task card's *Model · effort* column wins · permission mode `auto` · time limit 90 min · governor, plans, reviews `fable`/`high` · at most two lanes open (three only for three independent lanes) · wave 0 settles the shared files (settings, models, catalog)
 - **Usage:** none
 - **Packs on:** none
@@ -83,3 +86,5 @@
 ## Gotchas
 
 - `docs/` is tracked on the module branch; keep `dev` clean between modules.
+- Local `dev` never gets a commit of its own. Until 13 Nov 2026 it held two (`80fc40b`, `bc40b93`, the Kaizen roles);
+  they reach GitHub inside the M0b pull request.

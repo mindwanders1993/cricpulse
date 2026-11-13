@@ -42,6 +42,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 11 | M0b.15 Fix round: run safety and the absence log (D-18a, b, d, e) | A | Opus · **xhigh** | now: the review is written |
 | 12 | M0b.16 Fix: a name listed twice for one team (D-18c) | A | Opus · high | M0b.15 landed (same checkout, one builder at a time) |
 | 13 | M0b.17 UAT re-run after the fix round | A | Sonnet · medium | the second look passed; runs alone (it writes `data/`) |
+| 14 | M0b.18 Git: a session pushes and opens the PR on the owner's yes | A | Sonnet · medium | now (owner, 13 Nov 2026) |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -58,7 +59,8 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 4. **Stay inside "Owns".** Need another file? Stop and report BLOCKED with the reason.
 5. **Do not touch cricket logic** in the parser (M1) or API safety (M0a).
 6. **Finish green:** `ruff check src tests` + `python -m pytest -q` + the card's Verify.
-7. **Commit locally** on the lane branch with a conventional message. **The owner pushes and merges.**
+7. **Commit locally** on the lane branch with a conventional message. `kura` pushes and opens the pull request on the
+   owner's yes; **the owner merges** (AGENTS.md boundary 4, 13 Nov 2026).
 8. **Cloud commands** (`gcloud …`) are run by the owner. Cards list them exactly.
 9. End with a short **hand-off note** in the commit body: what changed, what to watch, anything open.
 
@@ -564,3 +566,34 @@ missing-match count, and the lock gone afterwards.
 **Done when:** 1–3 recorded as expected. Anything else (the count drops, a gate fails, the lock is left behind, the
 run refuses) → BLOCKED with the output; fix nothing.
 **Depends:** M0b.16 landed; the second look passed
+
+---
+
+### M0b.18 — Git: a session pushes and opens the pull request on the owner's yes
+**Goal:** Once the owner says yes, a session pushes the module branch and opens its pull request into `dev`. Nothing
+that fails the checks or the tests leaves the laptop. `dev` and `main` still move only by a pull request the owner
+merges.
+**Why:** On 13 Nov 2026 the owner said "learn from kaizencodes". There the agent pushes and opens the pull request
+after one approval, then watches the checks, and the owner merges in the GitHub web UI. This replaces AGENTS.md
+boundary 4 of 3 Nov 2026 ("local git only"). The new wording is in AGENTS.md and the Kaizen card's *Git* line.
+**Colour:** 🟡 (changes how work leaves the laptop; no app code)
+**Owns:** `.githooks/pre-push` (new). The untracked `08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md`
+is the owner's: leave it alone and out of the proof's `git status` check.
+**Subtasks:**
+1. Write `.githooks/pre-push`, executable, in the style of `.githooks/pre-commit`. Give it one comment line citing
+   AGENTS.md boundary 4.
+   - Git passes refs on stdin as `<local ref> <local sha> <remote ref> <remote sha>`. If any remote ref is
+     `refs/heads/dev` or `refs/heads/main`, print "CricPulse: dev and main move only by a merged pull request
+     (AGENTS.md, boundary 4)." and exit 1. This happens before anything else runs, and deletions are refused too.
+   - Otherwise run the card's Checks and Tests in order: `ruff check src tests`, `ruff format --check src tests`,
+     `python -m pytest -q`. Use the `.venv/bin/` tools when they exist, as `pre-commit` does. On the first failure,
+     print "CricPulse: <step> failed; fix before pushing." and exit 1.
+   - Print one line before the tests start, since they take a minute or two.
+2. **The owner's, not the builder's:** `.claude/settings.json`. The auto-mode check refuses a session that loosens
+   its own permissions (13 Nov 2026), so the owner removes the push and PR-create denies and adds the force-push,
+   `--no-verify` and `dev`/`main` push denies. The governor gives the exact change in chat; `kura` lands it with
+   this card, after reading the diff.
+**Verify:** `source .venv/bin/activate && bash -n .githooks/pre-push && test -x .githooks/pre-push && ! printf 'refs/heads/x %s refs/heads/dev %s\n' "$(git rev-parse HEAD)" 0000000000000000000000000000000000000000 | .githooks/pre-push origin x && ! printf 'refs/heads/x %s refs/heads/main %s\n' "$(git rev-parse HEAD)" 0000000000000000000000000000000000000000 | .githooks/pre-push origin x && printf 'refs/heads/x %s refs/heads/feat/x %s\n' "$(git rev-parse HEAD)" 0000000000000000000000000000000000000000 | .githooks/pre-push origin x`
+**Done when:** the hook refuses `dev` and `main` without running the tests, and passes a feature-branch push after
+ruff and the full suite pass. No other file changes.
+**Depends:** none (the rule text is the governor's, in AGENTS.md)

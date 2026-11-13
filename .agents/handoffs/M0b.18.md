@@ -1,0 +1,16 @@
+# Handoff: M0b.18 (A)
+- Branch / checkout: feat/M0b-trustworthy-data-pipeline, /Users/mrrobot/Desktop/Projects/cricpulse
+- State: done (subtask 1 only; subtask 2, .claude/settings.json, is the owner's and untouched)
+- Colour: 🟡
+- What changed:
+  - `.githooks/pre-push` (new, executable): refuses any remote ref `refs/heads/dev` or `refs/heads/main` (deletions too) before anything else; then ruff check, ruff format --check, full pytest, using `.venv/bin/` tools when present; prints a "running the full test suite" line first.
+  - `.agents/handoffs/M0b.18.md`: this note.
+- Verification run: the card's Verify command, exact, run after the last file change to the hook. Both refusals printed the boundary 4 line; then "All checks passed!", "61 files already formatted", 194 passed, 2 skipped, 1 warning in 13.33s. Exit code 0.
+- Done-when lines met:
+  - Refuses dev and main without running the tests: met (Verify clauses 3 and 4 print the refusal and no ruff or pytest output).
+  - Passes a feature-branch push after ruff and the full suite pass: met (Verify clause 5, exit 0).
+  - No other file changes: met (git status below).
+- Proof: 1) You can push a feature branch only after the checks and tests pass. 2) Pushing to dev or main is refused with "dev and main move only by a merged pull request". 3) 🟡 Works here; the hook is not yet switched on for git until the owner confirms core.hooksPath and the settings change.
+- Followed the code, not the card: none. Note: the failure message names the step, e.g. "ruff check failed", "ruff format failed", "pytest failed". If neither .venv/bin/ruff nor ruff on PATH exists, the ruff steps are skipped (as pre-commit skips) and the tests still run.
+- Open issues / decisions needed: Subtask 2 (.claude/settings.json deny changes) is the owner's. I did not read or change git config, so whether `core.hooksPath` points at `.githooks` is unchecked (git config reads were outside the allowed git commands). The hook never ran under a real `git push`; Verify drove it through stdin.
+- Proposed commit: `feat(githooks): pre-push refuses dev/main and runs ruff and tests [M0b.18]` — trailer `Module: M0b.18`

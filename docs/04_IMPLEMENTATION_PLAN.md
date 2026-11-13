@@ -22,7 +22,7 @@ Pick ─▶ Deep dive (dossier) ─▶ Task cards ─▶ Build task by task ─�
 | Test | Suite + evaluations green | `test` skill |
 | Review | `docs/reviews/M<n>-REVIEW.md` | A fresh session |
 | UAT | `docs/uat/M<n>-UAT.md` — scripted chat journeys | `uat` skill, owner signs |
-| Land | Local commits on a `feat/M<n>-…` branch from `dev` | `commit` skill; **the owner pushes and merges** |
+| Land | Local commits on a `feat/M<n>-…` branch from GitHub's `dev`; one pull request per module | `kura`: commits, then pushes and opens the PR on the owner's yes; **the owner merges** in the GitHub web UI |
 
 ---
 

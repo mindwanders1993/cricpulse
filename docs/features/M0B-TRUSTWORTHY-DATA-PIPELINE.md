@@ -13,7 +13,7 @@
 | **Goal** | A nightly job that turns Cricsheet files into a new, versioned DuckDB snapshot — and can never shrink, corrupt or empty the live data. |
 | **Fixes** | Blocking bugs 1 and 2 from `08 §9`, and the data half of bug 3. |
 | **Done when** | (1) Two runs in a row never lose a match. (2) A bad file or a failed gate leaves the live snapshot untouched. (3) The API serves the run's snapshot locally; on Cloud Run at the deploy, after the owner's final local testing (D-15). |
-| **Size** | 17 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 and M0b.14 added 12 Nov 2026, D-17; M0b.15, M0b.16 and M0b.17 added 13 Nov 2026, D-18) |
+| **Size** | 18 tasks, in two lanes (M0b.12 added 12 Nov 2026, D-16; M0b.13 and M0b.14 added 12 Nov 2026, D-17; M0b.15, M0b.16 and M0b.17 added 13 Nov 2026, D-18; M0b.18 added 13 Nov 2026, the owner's git change) |
 | **Risk** | Memory and time of the first full build — measured first (M0b.1) |
 
 ---
@@ -364,5 +364,6 @@ Review findings left open on purpose. Each has a home; whoever plans that home r
 | M0b.15 | Fix round: one run at a time, manifest before staging goes, the absence log, a passing failure stops the run (D-18) | A |
 | M0b.16 | Fix: a name listed twice for one team keeps one row (D-16b, D-18c) | A |
 | M0b.17 | UAT re-run after the fix round | A |
+| M0b.18 | Git: a session pushes and opens the pull request on the owner's yes (AGENTS.md boundary 4) | A |
 
 Cards with subtasks and Verify steps: `M0B-TASK-CARDS.md`.

@@ -21,6 +21,10 @@ shrink, corrupt or empty the live data. The API serves whichever snapshot `snaps
 - **Runs are safe.** Only one run at a time (`run.lock`). A crash is finished by the next run. A retry after a failed
   gate fails again until someone fixes the cause. The Sunday run names matches the archive no longer has.
 - **The API reads `LATEST.json`.** The sync endpoint and the hot swap are gone. `/ready` names the snapshot it serves.
+- **Pushing is a session's job now; merging stays the owner's.** On the owner's yes, a session pushes the module
+  branch, opens its pull request into `dev` and watches the checks. A new pre-push check refuses `dev` and `main`
+  and runs ruff and the full test suite first. This pull request also carries the two Kaizen-roles commits that
+  local `dev` held (`80fc40b`, `bc40b93`).
 - **Cloud code is written but not deployed.** It covers the Cloud Run job, the two schedules, the bucket mount and the
   API rollout. It runs at the deploy, after the owner's final local testing (D-15).
 
@@ -43,11 +47,12 @@ shrink, corrupt or empty the live data. The API serves whichever snapshot `snaps
 2. Start `bash scripts/run_local.sh`, then ask the U-3 question at http://127.0.0.1:8000/ui/. `/ready` should show
    `v20261112T1811Z`.
 3. Sign `docs/uat/M0B-UAT.md`.
-4. Push the branch and open the pull request (the commands below), then merge it into `dev`.
+4. Say yes to the push. The governor pushes the branch, opens the pull request (the commands below) and watches the
+   checks. Then merge it into `dev` in the GitHub web UI (AGENTS.md boundary 4, 13 Nov 2026).
 5. Later, at the deploy (D-15): M0b.10's steps 8–12, UAT U-4, the D-3 bench, and the deploy items in the dossier §7.1.
    Merging into `main` is the deploy.
 
-## Commands for the owner
+## Commands `kura` runs on the owner's yes
 
 ```bash
 git push -u origin feat/M0b-trustworthy-data-pipeline
