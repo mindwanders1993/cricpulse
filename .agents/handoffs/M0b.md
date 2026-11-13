@@ -4,7 +4,7 @@
 shrink, corrupt or empty the live data. The API serves whichever snapshot `snapshots/LATEST.json` names.
 
 **PR title:** `feat(M0b): trustworthy data pipeline — versioned snapshots that never shrink, Silver + manifest, quality gates, error table, run lock`
-**Target:** `dev` · **Branch:** `feat/M0b-trustworthy-data-pipeline` (code and gate at `95a1138`; this note is the last commit) · **Colour:** 🔴
+**Target:** `dev` · **Branch:** `feat/M0b-trustworthy-data-pipeline` (code at `95a1138`, git rule and gate at `2d415f2`) · **Colour:** 🔴
 
 ## What changed, in the app's words
 
@@ -33,8 +33,8 @@ shrink, corrupt or empty the live data. The API serves whichever snapshot `snaps
 | # | Gate | Evidence | Holds |
 |---|---|---|---|
 | 1 | Dossier approved | `docs/features/M0B-TRUSTWORTHY-DATA-PIPELINE.md`, decisions D-1 … D-18 | yes |
-| 2 | All task cards landed | M0b.1 … M0b.17 committed on the module branch; lane B merged (`1584cb7`) | yes |
-| 3 | `ruff` + `pytest` green | `ruff check` clean, `ruff format --check` 61 files, `pytest -q` **194 passed, 2 skipped** (the live cricsheet.org checks), exit 0, at `95a1138` | yes |
+| 2 | All task cards landed | M0b.1 … M0b.18 committed on the module branch; lane B merged (`1584cb7`) | yes |
+| 3 | `ruff` + `pytest` green | `ruff check` clean, `ruff format --check` 61 files, `pytest -q` **194 passed, 2 skipped** (the live cricsheet.org checks), exit 0, at `95a1138`, again at `2d415f2` through the new pre-push check | yes |
 | 4 | Evaluation set | not yet (none before M2) | n/a |
 | 5 | Review findings fixed | `docs/reviews/M0B-REVIEW.md`: CHANGES REQUIRED, then a fix round (D-18), then a second look: **PASS**. Findings left open on purpose are listed with their homes in the dossier §7.1 | yes |
 | 6 | UAT passes; owner signs | `docs/uat/M0B-UAT.md`: U-1, U-2 and both re-runs passed on the real archive (`v20261112T1811Z`, 23,239 matches, 11,739,043 deliveries; `run_uat.py` 8/8 on the mock model). **U-3 and the signature wait for the owner.** U-4 waits for the deploy (D-15) | owner |
