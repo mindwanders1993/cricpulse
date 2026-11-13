@@ -90,17 +90,8 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
     database_connected: bool = True
     tables_count: int = 0
-
-
-class SyncDailyResponse(BaseModel):
-    """Response for internal scheduled synchronization webhook."""
-
-    status: str = "success"
-    message: str = "Daily sync completed successfully"
-    matches_downloaded: int = 0
-    matches_ingested: int = 0
-    snapshot_published: str | None = None
-    duration_seconds: float = 0.0
+    # M0b task card M0b.10: the snapshot's version (M0b dossier D-8); None for the in-memory fallback
+    snapshot_version: str | None = None
 
 
 class AIStoryRequest(BaseModel):

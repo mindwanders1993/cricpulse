@@ -9,6 +9,9 @@ from src.utils import setup_logging
 
 logger = setup_logging()
 
+# M0b dossier §5.3: a match parsed with an older version is re-parsed; M1 bumps this
+PARSER_VERSION = 1
+
 
 MATCHES_SCHEMA = {
     "match_id": pl.Utf8,
@@ -101,7 +104,7 @@ class MatchParser:
         json_path = Path(json_path)
         raw_bytes = json_path.read_bytes()
         data = orjson.loads(raw_bytes)
-        match_id = json_path.stem.replace("wi_", "")  # Support Women's International prefix
+        match_id = json_path.stem  # M0b dossier D-9: file stem, wi_ prefix kept
         return self.parse_json(match_id, data)
 
     def parse_json(self, match_id: str, data: dict[str, Any]) -> dict[str, pl.DataFrame]:
@@ -156,13 +159,22 @@ class MatchParser:
 
         # 2. Match Players
         match_players_rows: list[dict[str, Any]] = []
+        team_of_player: dict[str | None, str] = {}
         for team_name, player_list in info.get("players", {}).items():
             for p_name in player_list:
+                player_id = resolve_id(p_name)
+                if player_id in team_of_player:
+                    # M0b dossier D-16(c): one player on both sides is quarantined (D-5), never given a team
+                    if team_of_player[player_id] != team_name:
+                        raise ValueError(f"player listed for both teams: {p_name}")
+                    # M0b dossier D-16(b): an exact repeat in one team's list carries nothing; keep one row
+                    continue
+                team_of_player[player_id] = team_name
                 match_players_rows.append(
                     {
                         "match_id": match_id,
                         "team_name": team_name,
-                        "player_id": resolve_id(p_name),
+                        "player_id": player_id,
                         "player_name": p_name,
                     }
                 )

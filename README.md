@@ -102,6 +102,26 @@ flowchart TD
 
 ---
 
+## ▶️ Running the job locally
+
+The job downloads the match archive, merges what changed into Silver, builds Gold, runs the quality gates and
+publishes a snapshot under `data/snapshots/` (`LATEST.json` names the live one). Run these from the repo root with
+the virtualenv active (`source .venv/bin/activate`).
+
+```bash
+python -m src.publisher.main run                      # nightly job: the recently_added_7_json archive
+python -m src.publisher.main run --archive all_json   # a full build from every Cricsheet match
+python -m src.publisher.main ingest-local -m <matches_dir> -p <people.csv> -n <names.csv>   # offline: local JSON files
+python -m src.publisher.main bench                    # time the five spike questions on the live snapshot (read-only)
+```
+
+Then `bash scripts/run_local.sh` serves the live snapshot on http://127.0.0.1:8000 (`curl -s localhost:8000/ready`
+names its version; the chat page is `/ui/`), and `python scripts/run_uat.py` walks the API against it. The cloud
+steps are `scripts/infra_m0b.sh`, run at the deploy (D-15), not before. The owner's walk-through is
+`docs/uat/M0B-UAT.md`.
+
+---
+
 ## 📑 Design Document Index
 
 | Document | Title & Scope | Key Topics Covered |

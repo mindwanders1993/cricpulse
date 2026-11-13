@@ -7,7 +7,11 @@ import pytest
 os.environ["APP_ENV"] = "test"
 
 from src.config import Settings
-from src.ledger import IdempotencyLedger
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # M0b dossier R-3: the live cricsheet.org checks carry this marker and skip unless CRICPULSE_LIVE=1
+    config.addinivalue_line("markers", "live: reaches cricsheet.org; needs CRICPULSE_LIVE=1")
 
 
 @pytest.fixture
@@ -17,17 +21,6 @@ def temp_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mock_settings(temp_dir: Path) -> Settings:
-    settings = Settings(
-        data_dir=temp_dir / "data",
-        gcs_bucket="test-cricpulse-bucket",
-        snapshot_date="2026-08-31",
-        force=False,
-    )
+    settings = Settings(data_dir=temp_dir / "data")
     settings.ensure_directories()
     return settings
-
-
-@pytest.fixture
-def ledger(temp_dir: Path) -> IdempotencyLedger:
-    db_path = temp_dir / "test_ledger.db"
-    return IdempotencyLedger(db_path)

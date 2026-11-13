@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Gate before every push: dev and main move only by a merged pull request (AGENTS.md, boundary 4).
+while read -r _lref _lsha rref _rsha; do
+  case "$rref" in
+    refs/heads/dev|refs/heads/main)
+      echo "CricPulse: dev and main move only by a merged pull request (AGENTS.md, boundary 4)."
+      exit 1 ;;
+  esac
+done
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if [ -x .venv/bin/ruff ]; then RUFF=.venv/bin/ruff; elif command -v ruff >/dev/null 2>&1; then RUFF=ruff; else RUFF=""; fi
+if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=python; fi
+if [ -n "$RUFF" ]; then
+  $RUFF check . || { echo "CricPulse: ruff check failed; fix before pushing."; exit 1; }
+  $RUFF format --check . || { echo "CricPulse: ruff format failed; fix before pushing."; exit 1; }
+fi
+echo "CricPulse: running the full test suite before the push (a minute or two)..."
+$PY -m pytest -q || { echo "CricPulse: pytest failed; fix before pushing."; exit 1; }

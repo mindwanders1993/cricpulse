@@ -1,0 +1,27 @@
+# Handoff: M0b.16 (lane A)
+- Branch / checkout: feat/M0b-trustworthy-data-pipeline, /Users/mrrobot/Desktop/Projects/cricpulse (main checkout)
+- State: done
+- Colour: 🟡
+- What changed:
+  - `src/parsers/match_parser.py`: in the match-players loop, an exact repeat (the same resolved player id already seen in the same team's list) is skipped with a comment citing `M0b dossier D-16(b)`. A player on both teams still raises "player listed for both teams: <name>" (D-16(c)). `PARSER_VERSION` stays 1 (D-18c).
+  - `tests/test_match_parser.py`: two new tests. `test_name_listed_twice_for_one_team_keeps_one_row` and `test_name_listed_twice_for_one_team_passes_player_match_grain_gate`. The D-16(c) tests are unchanged.
+  - `tests/fixtures/repeat_in_one_team_1229824.json` (new): the real Cricsheet file 1229824 with one change. Guernsey's "J Butler" becomes a second "IDA Damarell", so one name is listed twice in one team (21 distinct players).
+- Verification run: `source .venv/bin/activate && ruff check src tests && ruff format --check src tests && python -m pytest tests/test_match_parser.py -q && python -m pytest -q`
+  - ruff check: "All checks passed!"; ruff format: "61 files already formatted"
+  - test_match_parser.py: 8 passed
+  - full suite: 194 passed, 2 skipped (the live downloader tests, which only run with `CRICPULSE_LIVE=1`; they were skipped before this change too), 1 warning (the existing Starlette/httpx deprecation warning)
+  - exit code 0
+  - Checked that both new tests fail on the old parser: put HEAD's `match_parser.py` back in temporarily, saw `assert 2 == 1`, plus the grain gate failing with "Duplicate (match_id, player_id) detected in fact_player_match". Then put the fix back.
+- Done-when lines met:
+  - "both tests pass": yes. Repeat fixture parses with one row for IDA Damarell (`test_name_listed_twice_for_one_team_keeps_one_row`). Full fixture build (sample_t20, sample_test and the repeat fixture) passes `player_match_grain_uniqueness` (`test_name_listed_twice_for_one_team_passes_player_match_grain_gate`). D-16(c) tests `test_player_listed_for_both_teams_raises` and `..._is_quarantined_others_parsed` pass unchanged.
+  - "the full suite passes": yes, 194 passed, 2 skipped (live-only), exit 0.
+- Proof:
+  - A match file that lists one name twice for the same team now loads, and that player shows up once.
+  - The nightly publish no longer stops at the "player listed twice" check because of such a file.
+  - A match that lists one player for both teams is still set aside with "player listed for both teams".
+  - Recording: output only (the project's Proof is "none, output only", and no screen changed).
+- Followed the code, not the card: none
+- Open issues / decisions needed:
+  - Following the card's rule ("the same resolved player id"), two different spellings that the registry maps to one id in the same team also keep one row. The first spelling is kept. The full build showed no such case.
+  - No real file in the archive has this repeat today (D-18c), so the fixture is the real 1229824 file with one name changed.
+- Proposed commit: `fix(M0b): a name listed twice for one team keeps one row; both teams still quarantined [M0b.16]`. Trailer: `Module: M0b.16`

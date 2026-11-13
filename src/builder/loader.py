@@ -4,9 +4,39 @@ import duckdb
 import polars as pl
 
 from src.builder.schema import BUILD_MARTS_SQL, INIT_SCHEMA_SQL
+from src.config import Settings, get_settings
 from src.utils import setup_logging
 
 logger = setup_logging()
+
+MEMORY_LIMIT = "2GB"  # M0b spike §4 recommendation 3: DuckDB memory_limit=2GB inside a 4 GiB job
+
+# Parsed table → the Gold INSERT that maps it, shared by load_matches (DataFrames) and
+# build_from_silver (Silver Parquet). Plain INSERT, so a duplicate match fails loudly (M0b dossier D-9).
+_MATCH_INSERTS = {
+    "matches": """
+        INSERT INTO gold.dim_match (
+            match_id, match_date, match_type, gender, season, venue_name, city,
+            team1, team2, toss_winner, toss_decision, winner, result_type,
+            win_by_runs, win_by_wickets, player_of_match, player_of_match_id,
+            is_dls_applied, overs_limit, revision
+        )
+        SELECT 
+            match_id, match_date::DATE, match_type, gender, season, venue, city,
+            team1, team2, toss_winner, toss_decision, winner, result_type,
+            win_by_runs, win_by_wickets, player_of_match, player_of_match_id,
+            is_dls_applied, overs_limit, revision
+        FROM {source};
+    """,
+    "deliveries": "INSERT INTO gold.fact_delivery SELECT * FROM {source};",
+    "innings": "INSERT INTO gold.fact_innings SELECT * FROM {source};",
+    "wickets": "INSERT INTO gold.fact_wicket_detail SELECT * FROM {source};",
+    "match_players": "INSERT INTO gold.fact_player_match SELECT * FROM {source};",
+}
+
+
+def _quote(path: Path) -> str:
+    return "'" + str(path).replace("'", "''") + "'"
 
 
 class DuckDBLoader:
@@ -61,81 +91,60 @@ class DuckDBLoader:
 
     def load_matches(self, match_dfs: dict[str, pl.DataFrame]) -> None:
         """Load `dim_match`, `fact_delivery`, `fact_innings`, `fact_wicket_detail`, `fact_player_match`."""
-        if "matches" in match_dfs and not match_dfs["matches"].is_empty():
-            matches_df = match_dfs["matches"]
-            self.con.register("tmp_matches", matches_df.to_arrow())
-            self.con.execute("""
-                INSERT OR REPLACE INTO gold.dim_match (
-                    match_id, match_date, match_type, gender, season, venue_name, city,
-                    team1, team2, toss_winner, toss_decision, winner, result_type,
-                    win_by_runs, win_by_wickets, player_of_match, player_of_match_id,
-                    is_dls_applied, overs_limit, revision
-                )
-                SELECT 
-                    match_id, match_date::DATE, match_type, gender, season, venue, city,
-                    team1, team2, toss_winner, toss_decision, winner, result_type,
-                    win_by_runs, win_by_wickets, player_of_match, player_of_match_id,
-                    is_dls_applied, overs_limit, revision
-                FROM tmp_matches;
-            """)
-            self.con.unregister("tmp_matches")
+        for table, insert_sql in _MATCH_INSERTS.items():
+            if table in match_dfs and not match_dfs[table].is_empty():
+                view = f"tmp_{table}"
+                self.con.register(view, match_dfs[table].to_arrow())
+                self.con.execute(insert_sql.format(source=view))
+                self.con.unregister(view)
+        self._derive_venue_and_team()
+        logger.info("matches_loaded_into_duckdb")
 
-        if "deliveries" in match_dfs and not match_dfs["deliveries"].is_empty():
-            delivs_df = match_dfs["deliveries"]
-            self.con.register("tmp_deliveries", delivs_df.to_arrow())
-            self.con.execute("""
-                INSERT OR REPLACE INTO gold.fact_delivery
-                SELECT * FROM tmp_deliveries;
-            """)
-            self.con.unregister("tmp_deliveries")
+    def build_from_silver(
+        self,
+        silver_dir: Path,
+        register_dfs: dict[str, pl.DataFrame] | None = None,
+        settings: Settings | None = None,
+    ) -> None:
+        """Fill the Gold match tables from every row of `silver_dir/<table>.parquet` (M0b dossier §5.5)."""
+        settings = settings or get_settings()
+        # M0b spike §4: bounded memory, spilling to the job's local disk, never the mount (dossier §5.2)
+        self.con.execute(f"SET memory_limit = '{MEMORY_LIMIT}'")
+        self.con.execute(f"SET temp_directory = {_quote(settings.tmp_dir)}")
+        if register_dfs:
+            self.load_registers(register_dfs)
+        for table, insert_sql in _MATCH_INSERTS.items():
+            source = f"read_parquet({_quote(silver_dir / f'{table}.parquet')})"
+            self.con.execute(insert_sql.format(source=source))
+        self._derive_venue_and_team()
+        logger.info("silver_loaded_into_duckdb", silver_dir=str(silver_dir))
 
-        if "innings" in match_dfs and not match_dfs["innings"].is_empty():
-            innings_df = match_dfs["innings"]
-            self.con.register("tmp_innings", innings_df.to_arrow())
-            self.con.execute("""
-                INSERT OR REPLACE INTO gold.fact_innings
-                SELECT * FROM tmp_innings;
-            """)
-            self.con.unregister("tmp_innings")
-
-        if "wickets" in match_dfs and not match_dfs["wickets"].is_empty():
-            wickets_df = match_dfs["wickets"]
-            self.con.register("tmp_wickets", wickets_df.to_arrow())
-            self.con.execute("""
-                INSERT INTO gold.fact_wicket_detail
-                SELECT * FROM tmp_wickets;
-            """)
-            self.con.unregister("tmp_wickets")
-
-        if "match_players" in match_dfs and not match_dfs["match_players"].is_empty():
-            players_df = match_dfs["match_players"]
-            self.con.register("tmp_match_players", players_df.to_arrow())
-            self.con.execute("""
-                INSERT OR REPLACE INTO gold.fact_player_match
-                SELECT * FROM tmp_match_players;
-            """)
-            self.con.unregister("tmp_match_players")
-
-        # Derive dim_venue and dim_team
+    def _derive_venue_and_team(self) -> None:
+        # M0b dossier D-11: one row per venue name, its most frequent non-null city (ties alphabetical)
         self.con.execute("""
-            INSERT OR REPLACE INTO gold.dim_venue (venue_id, venue_name, city, country)
-            SELECT DISTINCT 
+            INSERT INTO gold.dim_venue (venue_id, venue_name, city, country)
+            SELECT
                 md5(venue_name) AS venue_id,
                 venue_name,
                 city,
                 NULL AS country
-            FROM gold.dim_match
-            WHERE venue_name IS NOT NULL;
+            FROM (
+                SELECT venue_name, city, count(*) AS n
+                FROM gold.dim_match
+                WHERE venue_name IS NOT NULL
+                GROUP BY venue_name, city
+            )
+            QUALIFY row_number() OVER (
+                PARTITION BY venue_name ORDER BY city IS NULL, n DESC, city
+            ) = 1;
         """)
 
         self.con.execute("""
-            INSERT OR REPLACE INTO gold.dim_team (team_id, team_name)
+            INSERT INTO gold.dim_team (team_id, team_name)
             SELECT DISTINCT md5(team1), team1 FROM gold.dim_match WHERE team1 IS NOT NULL
             UNION
             SELECT DISTINCT md5(team2), team2 FROM gold.dim_match WHERE team2 IS NOT NULL;
         """)
-
-        logger.info("matches_loaded_into_duckdb")
 
     def build_marts(self) -> None:
         """Materialize all analytical Mart tables."""

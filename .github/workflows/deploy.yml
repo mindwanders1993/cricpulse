@@ -16,10 +16,13 @@ on:
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || 'kaizencodes-prod' }}
-  REGION: us-central1
+  REGION: us-central1  # M0b dossier D-13c
   GAR_REPO: cricpulse
   SERVICE_NAME: cricpulse-api
-  JOB_NAME: cricpulse-ingest-job
+  JOB_NAME: cricpulse-ingest  # M0b dossier §5.10
+  BENCH_JOB_NAME: cricpulse-bench  # M0b dossier D-13e
+  # The bucket scripts/infra_m0b.sh setup made (its BUCKET); bucket names are global, so it may differ
+  BUCKET: ${{ vars.BUCKET || 'cricpulse-data' }}
 
 jobs:
   deploy:
@@ -45,27 +48,69 @@ jobs:
         run: |
           gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
+      # One image for the API service, the nightly job and the bench job
       - name: Build and Push Docker Image
         run: |
-          IMAGE_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
-          LATEST_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}/${{ env.SERVICE_NAME }}:latest"
-          
-          docker build -t "$IMAGE_TAG" -t "$LATEST_TAG" .
-          docker push "$IMAGE_TAG"
-          docker push "$LATEST_TAG"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPO}/${SERVICE_NAME}:${{ github.sha }}"
+          LATEST_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPO}/${SERVICE_NAME}:latest"
 
-      - name: Deploy FastAPI Microservice to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: ${{ env.SERVICE_NAME }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          region: ${{ env.REGION }}
-          flags: >-
-            --allow-unauthenticated
-            --min-instances=0
-            --max-instances=5
-            --memory=1Gi
-            --cpu=1
-            --port=8080
-            --set-env-vars=APP_ENV=production,GCS_BUCKET=${{ secrets.GCS_BUCKET }}
-            --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,SYNC_SECRET_TOKEN=SYNC_SECRET_TOKEN:latest
+          docker build -t "$IMAGE" -t "$LATEST_TAG" .
+          docker push "$IMAGE"
+          docker push "$LATEST_TAG"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # The API reads the snapshot LATEST.json names from the bucket, mounted read-only (M0b dossier §5.8).
+      # --set-env-vars replaces every env var, so SNAPSHOT_PATH stays unset; the next run sets
+      # SNAPSHOT_VERSION again (D-13a). TMP_DIR is off the mount (D-14a). Private: R0 is internal
+      # (PRD §9), so only signed-in callers with the invoker role reach it (task card M0b.10 audit).
+      - name: Deploy the API service
+        run: |
+          gcloud run deploy "$SERVICE_NAME" \
+            --image="$IMAGE" \
+            --region="$REGION" \
+            --service-account="cricpulse-api@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --command=uvicorn \
+            --args=src.api.app:app,--host,0.0.0.0,--port,8080 \
+            --port=8080 \
+            --no-allow-unauthenticated \
+            --min-instances=0 \
+            --max-instances=2 \
+            --memory=1Gi \
+            --cpu=1 \
+            --execution-environment=gen2 \
+            --add-volume=name=data,type=cloud-storage,bucket="$BUCKET",readonly=true \
+            --add-volume-mount=volume=data,mount-path=/mnt/data \
+            --set-env-vars=APP_ENV=production,DATA_DIR=/mnt/data,TMP_DIR=/tmp/cricpulse \
+            --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest
+
+      # The image's default command: python -m src.publisher.main run (M0b dossier §5.10).
+      # Builds on /tmp/cricpulse, never on the mount (§5.2); rolls the API out after each run (D-13a).
+      - name: Deploy the nightly job
+        run: |
+          gcloud run jobs deploy "$JOB_NAME" \
+            --image="$IMAGE" \
+            --region="$REGION" \
+            --service-account="cricpulse-job@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --tasks=1 \
+            --max-retries=1 \
+            --task-timeout=60m \
+            --memory=4Gi \
+            --add-volume=name=data,type=cloud-storage,bucket="$BUCKET" \
+            --add-volume-mount=volume=data,mount-path=/mnt/data \
+            --set-env-vars=APP_ENV=production,DATA_DIR=/mnt/data,TMP_DIR=/tmp/cricpulse,ROLLOUT_SERVICE=projects/${PROJECT_ID}/locations/${REGION}/services/${SERVICE_NAME}
+
+      # M0b dossier D-13e: the API service's account, memory and CPU, the bucket mounted read-only
+      - name: Deploy the bench job
+        run: |
+          gcloud run jobs deploy "$BENCH_JOB_NAME" \
+            --image="$IMAGE" \
+            --region="$REGION" \
+            --service-account="cricpulse-api@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --args=bench \
+            --tasks=1 \
+            --max-retries=0 \
+            --memory=1Gi \
+            --cpu=1 \
+            --add-volume=name=data,type=cloud-storage,bucket="$BUCKET",readonly=true \
+            --add-volume-mount=volume=data,mount-path=/mnt/data \
+            --set-env-vars=APP_ENV=production,DATA_DIR=/mnt/data,TMP_DIR=/tmp/cricpulse

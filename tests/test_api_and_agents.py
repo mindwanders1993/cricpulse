@@ -1,3 +1,5 @@
+import shutil
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import duckdb
@@ -15,6 +17,7 @@ from src.builder.loader import DuckDBLoader
 from src.config import get_settings
 from src.parsers.match_parser import MatchParser
 from src.parsers.register_parser import RegisterParser
+from src.snapshot import LatestInfo, write_latest
 
 
 @pytest.fixture
@@ -176,6 +179,68 @@ def test_api_health_and_readiness(api_client: TestClient):
     assert resp_ready.json()["tables_count"] > 0
 
 
+@pytest.fixture
+def mounted_data_dir(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """DATA_DIR as the cloud gives it to the API, read by get_settings() from the environment."""
+    data_dir = temp_dir / "mnt_data"
+    data_dir.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("TMP_DIR", str(temp_dir / "tmp_cricpulse"))
+    monkeypatch.setenv("SNAPSHOT_PATH", "")
+    get_settings.cache_clear()
+    yield data_dir
+    get_settings.cache_clear()
+    for d in (data_dir, *data_dir.rglob("*")):
+        if d.is_dir():
+            d.chmod(0o755)
+
+
+def _read_only(root: Path) -> None:
+    """Make every folder under root read-only, as the bucket is mounted for the API."""
+    for d in (root, *root.rglob("*")):
+        if d.is_dir():
+            d.chmod(0o555)
+
+
+def test_api_starts_on_a_data_dir_it_cannot_write(mounted_data_dir: Path, temp_dir: Path):
+    # M0b dossier D-14a: the bucket before the first build is empty and mounted read-only
+    _read_only(mounted_data_dir)
+
+    with TestClient(create_app()) as client:
+        ready = client.get("/ready")
+
+    assert ready.status_code == 200
+    assert ready.json()["snapshot_version"] is None  # the in-memory fallback
+    assert list(mounted_data_dir.iterdir()) == []
+    assert not (temp_dir / "tmp_cricpulse").exists()
+
+
+def test_ready_names_the_snapshot_latest_json_points_at(
+    mounted_data_dir: Path, populated_db_path: Path
+):
+    version = "v20261112T0230Z"
+    snapshot = mounted_data_dir / "snapshots" / f"cricket_{version}.duckdb"
+    snapshot.parent.mkdir()
+    shutil.copy(populated_db_path, snapshot)
+    info = LatestInfo(
+        version=version,
+        path=f"snapshots/{snapshot.name}",
+        sha256="ab" * 32,
+        match_count=2,
+        delivery_count=500,
+        data_cutoff=date(2026, 11, 11),
+        parser_version=1,
+        created_at=datetime(2026, 11, 12, 2, 41, tzinfo=UTC),
+    )
+    write_latest(mounted_data_dir, info)
+    _read_only(mounted_data_dir)
+
+    with TestClient(create_app()) as client:
+        ready = client.get("/ready").json()
+
+    assert (ready["status"], ready["snapshot_version"]) == ("ready", version)
+
+
 def test_api_analytics_leaderboards(api_client: TestClient):
     # Batting leaderboard
     resp_bat = api_client.get("/api/v1/analytics/leaderboards/batting?match_type=T20&limit=10")
@@ -288,60 +353,3 @@ def test_api_ai_chat_endpoint(api_client: TestClient):
     assert data["status"] == "success"
     assert "reply" in data
     assert "routed_agent" in data
-
-
-def test_api_internal_sync_endpoint(api_client: TestClient, monkeypatch):
-    settings = get_settings()
-
-    # 1. In test environment, sync is allowed without token
-    monkeypatch.setattr(settings, "app_env", "test")
-    # Mock download_registers to avoid external HTTP in unit tests
-    from unittest.mock import patch
-
-    with (
-        patch(
-            "src.downloaders.register_downloader.RegisterDownloader.download_registers"
-        ) as mock_reg,
-        patch(
-            "src.downloaders.match_downloader.MatchDownloader.download_and_extract"
-        ) as mock_match,
-    ):
-        mock_reg.return_value = (
-            Path("tests/fixtures/sample_people.csv"),
-            Path("tests/fixtures/sample_names.csv"),
-        )
-        mock_match.return_value = [Path("tests/fixtures/sample_t20.json")]
-
-        resp = api_client.post("/api/v1/internal/sync-daily")
-        assert resp.status_code == 200
-        sync_data = resp.json()
-        assert sync_data["status"] == "success"
-        assert "matches_downloaded" in sync_data
-
-    # 2. In production environment with token, unauthorized without header
-    monkeypatch.setattr(settings, "app_env", "production")
-    monkeypatch.setattr(settings, "sync_secret_token", "super_secret_token_123")
-
-    resp_unauth = api_client.post("/api/v1/internal/sync-daily")
-    assert resp_unauth.status_code == 401
-
-    # 3. Authorized with correct header
-    with (
-        patch(
-            "src.downloaders.register_downloader.RegisterDownloader.download_registers"
-        ) as mock_reg,
-        patch(
-            "src.downloaders.match_downloader.MatchDownloader.download_and_extract"
-        ) as mock_match,
-    ):
-        mock_reg.return_value = (
-            Path("tests/fixtures/sample_people.csv"),
-            Path("tests/fixtures/sample_names.csv"),
-        )
-        mock_match.return_value = [Path("tests/fixtures/sample_t20.json")]
-
-        resp_auth = api_client.post(
-            "/api/v1/internal/sync-daily",
-            headers={"X-Sync-Token": "super_secret_token_123"},
-        )
-        assert resp_auth.status_code == 200

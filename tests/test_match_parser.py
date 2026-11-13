@@ -1,7 +1,14 @@
 from pathlib import Path
 
+import pytest
+
+from src.builder.loader import DuckDBLoader
 from src.parsers.edge_cases import compute_phase, normalize_season
 from src.parsers.match_parser import MatchParser
+from src.parsers.register_parser import RegisterParser
+from src.publisher import archive
+from src.publisher.quality_gates import run_quality_gates
+from src.utils import compute_bytes_sha256
 
 
 def test_normalize_season():
@@ -82,3 +89,66 @@ def test_parse_batch():
 
     assert len(combined["matches"]) == 2
     assert len(combined["deliveries"]) > len(parser.parse_file(p1)["deliveries"])
+
+
+# M0b dossier D-16(c): Cricsheet 1229824 (Isle of Man tour of Guernsey, 2020) lists "J Butler" for both
+# teams and its registry gives that name one id, so match_players held (1229824, efcb778e) twice.
+BOTH_TEAMS = Path("tests/fixtures/both_teams_1229824.json")
+
+
+def test_player_listed_for_both_teams_raises():
+    with pytest.raises(ValueError, match=r"^player listed for both teams: J Butler$"):
+        MatchParser().parse_file(BOTH_TEAMS)
+
+
+def test_player_listed_for_both_teams_is_quarantined_others_parsed(tmp_path: Path):
+    t20 = Path("tests/fixtures/sample_t20.json").read_bytes()
+    items = [
+        ("1001", compute_bytes_sha256(t20), t20),
+        ("1229824", "sha", BOTH_TEAMS.read_bytes()),
+    ]
+    state = archive.parse_to_staging(items, tmp_path / "_staging" / "v1")
+
+    assert state.changed_ids == ["1001"]
+    assert state.quarantined == [("1229824", "ValueError: player listed for both teams: J Butler")]
+
+
+# M0b dossier D-16(b), D-18(c): the 1229824 file with Guernsey's "J Butler" changed to a second
+# "IDA Damarell", so one name is listed twice in one team's list. The exact repeat keeps one row.
+REPEAT_IN_ONE_TEAM = Path("tests/fixtures/repeat_in_one_team_1229824.json")
+
+
+def test_name_listed_twice_for_one_team_keeps_one_row():
+    players = MatchParser().parse_file(REPEAT_IN_ONE_TEAM)["match_players"]
+
+    damarell = players.filter(players["player_name"] == "IDA Damarell")
+    assert len(damarell) == 1
+    assert damarell["team_name"].to_list() == ["Guernsey"]
+    assert len(players) == 21
+    assert players.select("player_id").n_unique() == 21
+
+
+def test_name_listed_twice_for_one_team_passes_player_match_grain_gate(tmp_path: Path):
+    loader = DuckDBLoader(db_path=tmp_path / "repeat.duckdb")
+    try:
+        loader.load_registers(
+            RegisterParser().parse_registers(
+                "tests/fixtures/sample_people.csv", "tests/fixtures/sample_names.csv"
+            )
+        )
+        loader.load_matches(
+            MatchParser().parse_batch(
+                [
+                    "tests/fixtures/sample_t20.json",
+                    "tests/fixtures/sample_test.json",
+                    str(REPEAT_IN_ONE_TEAM),
+                ]
+            )
+        )
+        loader.build_marts()
+        results = run_quality_gates(loader.con)
+    finally:
+        loader.close()
+
+    gate = next(r for r in results if r["check"] == "player_match_grain_uniqueness")
+    assert gate["passed"]
