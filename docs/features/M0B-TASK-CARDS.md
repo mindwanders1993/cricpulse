@@ -43,6 +43,7 @@ Lane B (API/publish)      └─▶ M0b.9 ─▶ M0b.6 ─▶ M0b.7 ─┴─▶
 | 12 | M0b.16 Fix: a name listed twice for one team (D-18c) | A | Opus · high | M0b.15 landed (same checkout, one builder at a time) |
 | 13 | M0b.17 UAT re-run after the fix round | A | Sonnet · medium | the second look passed; runs alone (it writes `data/`) |
 | 14 | M0b.18 Git: a session pushes and opens the PR on the owner's yes | A | Sonnet · medium | now (owner, 13 Nov 2026) |
+| 15 | M0b.19 The local checks are CI's checks | A | Sonnet · medium | M0b.18 landed; PR #11's CI failed at ruff |
 
 - **Lane B** runs in its own worktree: `git worktree add ../cricpulse-M0b-b -b feat/M0b-lane-b`
   from the module branch **after M0b.2 is committed**. It merges back before M0b.8.
@@ -597,3 +598,27 @@ is the owner's: leave it alone and out of the proof's `git status` check.
 **Done when:** the hook refuses `dev` and `main` without running the tests, and passes a feature-branch push after
 ruff and the full suite pass. No other file changes.
 **Depends:** none (the rule text is the governor's, in AGENTS.md)
+
+---
+
+### M0b.19 — The local checks are CI's checks
+**Goal:** A branch that passes the laptop's checks passes GitHub's. The spike scripts and the design documents under
+`docs/` are not linted as app code.
+**Why:** PR #11's first CI run (13 Nov 2026) failed at "Run Ruff Linting" on all three Pythons. CI runs
+`ruff check .` and `ruff format --check .`, while the card's *Checks* and the pre-push check (M0b.18) run only
+`src tests`. Every failure was under `docs/`: `docs/features/m0b_spike/nopk_build.py` (E401, I001, E701, E702),
+and the formatting of `docs/features/m0b_spike/spike.py`, `nopk_build.py`, and a code block in
+`docs/03_LOW_LEVEL_DESIGN.md`. Ruled by the governor: exclude `docs/` from ruff. We are not reformatting the spike
+scripts and the LLD, because they record what was measured and decided and are not app code. The local checks now
+run CI's exact commands, so the gap cannot open again.
+**Colour:** 🟢 (lint scope and the hook; no app behaviour)
+**Owns:** `pyproject.toml` (only `[tool.ruff]`), `.githooks/pre-push`. The untracked
+`08_AGENTIC_GENAI_REBUILD_BRAINSTORM.md` is the owner's: leave it alone and out of the proof's `git status` check.
+**Subtasks:**
+1. In `pyproject.toml` `[tool.ruff]`, add `extend-exclude = ["docs"]`. Change nothing else in the file.
+2. In `.githooks/pre-push`, run CI's ruff steps exactly: `ruff check .` and `ruff format --check .`, instead of
+   `... src tests`. Change nothing else; the `dev`/`main` refusal and the pytest step stay as they are.
+**Verify:** `source .venv/bin/activate && ruff check . && ruff format --check . && bash -n .githooks/pre-push && ! printf 'refs/heads/x %s refs/heads/dev %s\n' "$(git rev-parse HEAD)" 0000000000000000000000000000000000000000 | .githooks/pre-push origin x && printf 'refs/heads/x %s refs/heads/feat/x %s\n' "$(git rev-parse HEAD)" 0000000000000000000000000000000000000000 | .githooks/pre-push origin x`
+**Done when:** CI's two ruff commands pass on the whole repo, the hook runs them, and the full suite passes. No file
+under `docs/` changes.
+**Depends:** M0b.18 landed
