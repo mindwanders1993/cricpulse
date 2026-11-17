@@ -1,6 +1,6 @@
 # CricPulse — Product Requirement Document
 
-**Status:** Draft v0.1 · **Date:** 26 Oct 2026 · **Scope:** Non-commercial, public
+**Status:** Draft v0.1 · **Date:** 26 Oct 2026 · **Revised:** 17 Nov 2026 (personal, local) · **Scope:** Non-commercial, owner only
 **Next documents:** `02_HIGH_LEVEL_DESIGN.md` → `03_LLD_*.md` → `04_IMPLEMENTATION_PLAN.md` → `features/M<n>-*.md`
 
 ---
@@ -29,13 +29,13 @@ PRD (what & why) ─▶ HLD (architecture + diagram) ─▶ LLD (per module)
 1. **Numbers come from the database, never from the model.**
 2. **Every answer shows its receipt** — the query, row count, data cutoff and sources.
 3. **Chat is the only surface.** Features are things you ask for, not pages.
-4. **Cheap to run.** A hard monthly cost cap, enforced in code.
-5. **Licensed data only at public launch.** Every source has a known licence and attribution.
+4. **Runs on my laptop. No paid service.** *(Superseded 17 Nov 2026: runs on my laptop, no paid service — instead of "cheap to run, a hard monthly cost cap", because the owner is the only user and the model runs locally.)*
+5. **Licence settled before anything is shared.** Every source has a known licence and attribution before it leaves the laptop. *(Superseded 17 Nov 2026: licence settled before anything is shared — instead of "licensed data only at public launch", because there is no public launch now.)*
 
 ### 0.4 Decisions
 
-**Status (26 Oct 2026):** the owner asked to proceed, so D-1 … D-5 are taken at the recommended
-values below. Any of them can still be changed.
+**Status (26 Oct 2026):** the owner asked to proceed, so D-1 … D-5 were taken at the recommended
+values below. **On 17 Nov 2026 the owner changed all five** (see the notes under the table).
 
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
@@ -44,6 +44,16 @@ values below. Any of them can still be changed.
 | D-3 | Languages at launch | English only · English + Hindi · Four Indian languages | **English at launch, Hindi next** |
 | D-4 | Playing-style data (batting hand, bowling style) | `cricketdata` CSV · Paid API · Curate our own · Skip at launch | **CSV while building; settle the licence before public launch** |
 | D-5 | Monthly running-cost cap | ₹1,000 · Other | **₹1,000** |
+
+**Rulings of 17 Nov 2026.** CricPulse is a personal tool for the owner alone. It runs on the owner's Mac
+on a fully open-source stack. It uses no paid service and no Google Cloud.
+
+- **D-1 — Superseded 17 Nov 2026:** the v1 user is the owner — instead of fans and writers, because this is a personal tool on one laptop.
+- **D-2 — Superseded 17 Nov 2026:** no public path; the chat is reachable on this laptop only, and `run_sql` stays available to the owner (typed tools still come first) — instead of open access with per-user limits and a daily spend cap, because nobody else uses it and small local models write worse SQL than a large cloud model.
+- **D-3 — Superseded 17 Nov 2026:** English only for now; Hindi is parked with the other public items — instead of English at launch and Hindi next, because there is no launch.
+- **D-4 — Superseded 17 Nov 2026:** the `cricketdata` CSV is fine for personal use, and its licence is parked until anything is shared — instead of settling the licence before public launch, because nothing is public.
+- **D-5 — Superseded 17 Nov 2026:** no paid API calls anywhere, and a latency target (≤ 30 s for a full answer) — instead of a ₹1,000 monthly cap, because local models cost nothing per answer.
+- **Ambiguity and modules:** the bot asks when a question is ambiguous (FR-3 holds), and modules are built one at a time.
 
 Architecture choices (DuckDB vs Postgres, agent framework, UI tech) are **HLD decisions**, not PRD ones.
 
@@ -65,15 +75,15 @@ and the AI only explains — it never invents.
 - Ask in plain words. Get a short insight, key numbers, a chart, a table and the receipt.
 - Follow-up suggestions keep the conversation going.
 
-### 1.4 Success measures (first 90 days after public launch — proposed)
+### 1.4 Success measures (daily use by the owner — revised 17 Nov 2026)
 
 | Measure | Target |
 |---|---|
 | Answers whose numbers all appear in tool output (checker pass rate) | 100% shipped; regenerations logged |
 | Correct answers on the evaluation set | ≥ 90% |
 | Answers carrying a full receipt | 100% |
-| Time to first token / full answer (p95) | ≤ 2 s / ≤ 10 s |
-| Monthly running cost | ≤ cap (D-5) |
+| Time to full answer (p95) | ≤ 30 s (a local model takes 4–8 s per step) |
+| Paid API calls | None |
 
 ---
 
@@ -177,12 +187,12 @@ Plain, short sentences. Numbers first, adjectives last.
 
 | Area | Requirement |
 |---|---|
-| Cost | Monthly cap (D-5) enforced by a daily spend limit; per-user and per-IP rate limits |
+| Cost | No paid service and no paid API calls. A latency target replaces the cost cap (D-5). |
 | Latency | See §1.4 |
-| Availability | Best effort; a cold start must not serve an empty database |
-| Security | Read-only data path; hardened SQL guard; secrets outside the image; CORS locked down |
-| Privacy | No accounts in v1 (D-2); chat logs kept 30 days for evaluation, no personal data |
-| Attribution | Cricsheet, Open-Meteo, Wikipedia credited in the UI |
+| Availability | Runs when the owner starts the model gateway and the app. If the model is not running, the reply says so. A start must not serve an empty database. |
+| Security | Read-only data path; hardened SQL guard; the app listens on `127.0.0.1` only; secrets only in `.env` |
+| Privacy | Nothing leaves the laptop. No accounts, no cloud logs. Chat logs stay local, for evaluation. |
+| Attribution | Cricsheet, Open-Meteo, Wikipedia credited in the UI. Licences are settled before anything is shared (principle 5). |
 | Quality | An evaluation set of real questions runs before each release |
 | Observability | Per-answer trace: tools called, tokens, cost, latency, checker result |
 
@@ -202,10 +212,10 @@ Plain, short sentences. Numbers first, adjectives last.
 | Release | Name | What ships | Who sees it |
 |---|---|---|---|
 | **R0** | Make it correct | The three blocking bugs (08 §9): delta rebuild, atomic publish, empty/open deploy. Plus `sort_by` injection, SQL file/network access off, a lockfile. | Internal |
-| **R1** | Ask the stats | FR-1 to FR-8 (no style matchups), TR-1 to TR-9, rate limits + spend cap, evaluation set | Private beta |
-| **R2** | Public launch | Tournaments, player profiles, playing styles (licence settled), phase/venue splits, attribution | Public |
-| **R3** | Knows cricket | Rules & knowledge, Hindi, optional news search | Public |
-| **R4** | Predicts | Match preview card, win probability, what-if | Public |
+| **R1** | Daily use by the owner | FR-1 to FR-8 (no style matchups), TR-1 to TR-9, evaluation set, model choice by the eval score | The owner |
+| **R2** | Tournaments and profiles | Tournaments, player profiles, playing styles, phase/venue splits. The public launch is parked (17 Nov 2026), and so are rate limits and the spend cap. | The owner |
+| **R3** | Knows cricket | Rules & knowledge, Hindi, optional news search | The owner |
+| **R4** | Predicts | Match preview card, win probability, what-if | The owner |
 
 The implementation plan turns each release into modules (M0, M1 …).
 
@@ -216,7 +226,7 @@ The implementation plan turns each release into modules (M0, M1 …).
 | Risk | Mitigation |
 |---|---|
 | Playing-style data licence | D-4; skip styles at launch if unresolved |
-| LLM cost on a public endpoint | Rate limits, spend cap, cheapest model that passes the evaluation set |
+| Small local model guesses or writes poor SQL | Typed tools first; tools ask when something is missing; the model that passes the most of the evaluation set wins |
 | Model invents or mistranslates numbers | TR-1 checker, including Hindi answers |
 | Web search terms (storage limits, no free tier) | Optional feature; cache only derived facts |
 | Single developer time | One module at a time; seal before starting the next |
