@@ -11,4 +11,5 @@ if [ -d ".venv" ]; then
 fi
 
 echo "🏏 Starting CricPulse API Server on http://127.0.0.1:8000..."
-exec uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+# Local OSS plan, card R.2: binds 127.0.0.1, instead of 0.0.0.0, so only this laptop can reach it
+exec uvicorn src.api.app:app --host 127.0.0.1 --port 8000 --reload

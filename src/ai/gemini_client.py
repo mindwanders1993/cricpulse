@@ -1,5 +1,3 @@
-import os
-
 import httpx
 
 from src.config import Settings, get_settings
@@ -7,26 +5,40 @@ from src.utils import setup_logging
 
 logger = setup_logging()
 
+# Local OSS plan, card R.2: what the user reads when the local model cannot answer
+LOCAL_MODEL_DOWN = "Local model not running — run `make start` in Moonhopper"
 
+
+class LocalModelUnavailable(RuntimeError):
+    """Moonhopper's gateway, or the local model behind it, did not answer."""
+
+
+# Local OSS plan, card R.2: keeps the name GeminiClient, instead of a rename, because six files import it
 class GeminiClient:
-    """Client for Gemini 2.5 Flash via OpenRouter, with test mode fallback."""
+    """Client for the local model behind Moonhopper's LiteLLM gateway, with a test-mode mock."""
 
-    def __init__(self, settings: Settings | None = None, model: str = "google/gemini-2.5-flash"):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        model: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ):
         self.settings = settings or get_settings()
-        self.api_key = self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = model
-        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+        self.api_key = self.settings.llm_api_key
+        self.model = model or self.settings.llm_model
+        self.base_url = self.settings.llm_base_url.rstrip("/")
+        self.transport = transport
 
     def generate_text(self, system_instruction: str, prompt: str) -> str:
-        """Call Gemini 2.5 Flash via OpenRouter's chat completions API, or use mock response if no API key."""
-        if not self.api_key or self.settings.app_env == "test":
-            logger.info("gemini_mock_mode_active", reason="No API key or test env")
+        """Call the local model through the gateway's chat completions API; the mock runs in tests only."""
+        # Local OSS plan, card R.2: the mock runs only when app_env == test, instead of whenever no key is set
+        if self.settings.app_env == "test":
+            logger.info("llm_mock_mode_active", reason="test env")
             return self._mock_generate(prompt)
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         payload = {
             "model": self.model,
             "messages": [
@@ -37,14 +49,31 @@ class GeminiClient:
             "max_tokens": 2048,
         }
 
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(self.base_url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            choices = data.get("choices", [])
-            if choices:
-                return choices[0]["message"]["content"]
-            return ""
+        url = f"{self.base_url}/chat/completions"
+
+        try:
+            with httpx.Client(timeout=30.0, transport=self.transport) as client:
+                response = client.post(url, json=payload, headers=headers)
+        except httpx.TransportError as err:
+            # The gateway is down (connection refused) or gave no answer in time
+            logger.error("local_model_unreachable", url=url, error=str(err))
+            raise LocalModelUnavailable(LOCAL_MODEL_DOWN) from err
+        if response.status_code >= 500:
+            # The gateway is up but the model server is not: LiteLLM answers 500 "Connection error"
+            logger.error(
+                "local_model_unavailable",
+                url=url,
+                status=response.status_code,
+                body=response.text[:500],
+            )
+            raise LocalModelUnavailable(LOCAL_MODEL_DOWN)
+
+        response.raise_for_status()
+        data = response.json()
+        choices = data.get("choices", [])
+        if choices:
+            return choices[0]["message"]["content"]
+        return ""
 
     def _mock_generate(self, prompt: str) -> str:
         """Deterministic mock responses for unit & integration testing."""
