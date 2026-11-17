@@ -1,0 +1,41 @@
+# Handoff: R.2 (app)
+
+- Branch / checkout: `feat/R-app` in `/Users/mrrobot/Desktop/Projects/cricpulse-R-app`
+- State: done
+- Colour: 🔴 (touches `src/config.py`)
+- What changed:
+  - `src/config.py`: adds `llm_base_url` (`http://127.0.0.1:4000/v1`), `llm_model` (`cricpulse-local`) and `llm_api_key` (empty; `LLM_API_KEY` in `.env`); removes `gemini_api_key`.
+  - `src/ai/gemini_client.py`: `GeminiClient` (same name) posts to `<llm_base_url>/chat/completions` with `llm_model` and `Authorization: Bearer <llm_api_key>` (no header when the key is empty). The mock runs only when `app_env == test`. When the gateway is down, a call times out, or the gateway answers 5xx (MLX server down), it raises `LocalModelUnavailable("Local model not running — run `make start` in Moonhopper")`. Adds an optional `transport` argument so tests mock httpx at the transport.
+  - `scripts/run_local.sh`: uvicorn binds `127.0.0.1` instead of `0.0.0.0` (line 15 now; a comment cites the card).
+  - `scripts/deploy.sh`: deleted (decision 2).
+  - `scripts/infra_m0b.sh`: deleted (decision 2).
+  - `tests/test_llm_client.py` (new): 9 tests: settings defaults, key read from a temp `.env`, request URL / model / auth header, no key means no header and still no mock, mock only in the test env, the "not running" message for gateway down / timeout / model server down (and the key never in the log), and the chat endpoint's reply.
+- Verification run: `cd /Users/mrrobot/Desktop/Projects/cricpulse-R-app && .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/python -m pytest -q -p no:warnings; echo "VERIFY EXIT $?"` printed `All checks passed!`, `102 files already formatted`, `203 passed, 2 skipped in 9.77s`, `VERIFY EXIT 0`. The baseline before this change was 194 passed, 2 skipped; the same two live cricsheet tests skip (`CRICPULSE_LIVE` unset).
+- Done-when lines met:
+  - Settings gain `llm_base_url`, `llm_model`, `llm_api_key` with the card's defaults, the key read from `.env`: met. `test_settings_point_at_the_local_gateway`, `test_llm_api_key_is_read_from_the_env_file`.
+  - The class keeps the name `GeminiClient`: met. Six files outside Owns import it (`src/ai/__init__.py`, `narrative_storyteller.py`, `supervisor.py`, `tactical_scout.py`, `text_to_sql.py`, `src/api/app.py`); none changed.
+  - The mock runs only when `app_env == test`: met. `test_mock_runs_only_in_the_test_env`, `test_without_a_key_it_still_calls_the_gateway_not_the_mock`.
+  - Gateway unreachable means the reply says "Local model not running — run `make start` in Moonhopper", not canned text: met. `test_local_model_not_running_says_so` (gateway down, timeout, model server down) and `test_chat_reply_says_local_model_not_running`. The chat page shows `Failed to process chat: Local model not running — run `make start` in Moonhopper` in its red error bubble (HTTP 500 `detail`); no stack trace, no mock text.
+  - uvicorn binds `127.0.0.1`: met. `scripts/run_local.sh`.
+  - Tests cover the request URL, model and auth header with httpx mocked at the transport (`httpx.MockTransport`): met. `test_request_goes_to_the_gateway_with_model_and_key`.
+  - `scripts/deploy.sh` and `scripts/infra_m0b.sh` deleted: met.
+  - `python -m pytest -q` and the Checks pass: met (above).
+  - Live call: not run, by design. It is the owner's hand check: `make start` in Moonhopper, put the gateway key in CricPulse's `.env` as `LLM_API_KEY=…`, `bash scripts/run_local.sh`, ask one question at http://127.0.0.1:8000/ui/.
+- Proof: output only.
+  - You can chat with CricPulse on your own laptop's model through Moonhopper; no OpenRouter, no bill, and the app is reachable only from this Mac.
+  - If Moonhopper or its model is not running, the chat says "Local model not running — run `make start` in Moonhopper" instead of a made-up answer.
+  - Works in the tests (203 passed); the live chat is your hand check after `make start`.
+- Followed the code, not the card:
+  - The user sees the message with a prefix: `Failed to process chat: Local model not running — run `make start` in Moonhopper`, in the chat's error bubble. The prefix comes from `src/api/routes/ai.py` (outside Owns), which wraps every agent error as HTTP 500 `detail`. The client raises instead of returning the message as text, because the SQL agent would otherwise feed the message to the guard and the user would see "Security Guardrail Violation".
+  - "Cannot be reached" covers three cases: connection refused (gateway down), any httpx transport error including a timeout, and any 5xx from the gateway (LiteLLM's 500 "Connection error" / "No fallback model group found" when MLX is down).
+  - `gemini_api_key` is removed, not kept: nothing outside Owns reads the setting. A leftover `GEMINI_API_KEY` in `.env` is ignored (`extra="ignore"`). `tests/test_rollout.py` and `.github/workflows/deploy.yml` name `GEMINI_API_KEY` only as a Cloud Run secret name, not the setting.
+  - The `os.getenv("GEMINI_API_KEY")` fallback is gone; the key comes from settings only (invariant 8).
+  - With an empty `llm_api_key` the client sends no `Authorization` header (an empty `Bearer ` value is not a valid header).
+  - `run_local.sh:14` is now line 15, because the one-line comment citing the card sits above it.
+- Open issues / decisions needed:
+  - `.env.example` (outside Owns) still lists `GEMINI_API_KEY=` and has no `LLM_*` lines. The owner's `.env` needs `LLM_API_KEY=<gateway key>`.
+  - Stale mentions of the deleted scripts, outside Owns: `README.md:120` (`infra_m0b.sh`), `.agents/skills/dojo/SKILL.md:52` (`deploy.sh`), a comment in `.github/workflows/deploy.yml:24`. Nothing runs them.
+  - `python scripts/run_uat.py` now calls the local model for its AI scenarios unless `APP_ENV=test`; with Moonhopper stopped, those scenarios fail with the "not running" message. Before, a missing key meant the mock.
+  - The 30 s per-call timeout is today's value, unchanged. A local answer slower than 30 s on one call shows the "not running" message; if the hand check hits this, raise the timeout in a later card.
+  - A wrong or missing gateway key gives `Failed to process chat: Client error '401 Unauthorized' …`, not the "not running" message, because the gateway is running.
+- Proposed commit: `feat(ai): chat runs on the local Moonhopper model, bound to localhost [R.2]` — trailer `Module: R.2`

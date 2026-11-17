@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     data_dir: Path = Path("data")
     cricsheet_base_url: str = "https://cricsheet.org"
-    gemini_api_key: str = ""
+    # Local OSS plan, card R.2: Moonhopper's local LiteLLM gateway, instead of OpenRouter
+    llm_base_url: str = "http://127.0.0.1:4000/v1"
+    llm_model: str = "cricpulse-local"
+    llm_api_key: str = ""  # the gateway's local key, LLM_API_KEY in .env
     # M0b dossier §5.9: None means <data_dir>/tmp (data/tmp by default); /tmp/cricpulse in the cloud
     tmp_dir: Path | None = None
     snapshot_path: str = ""

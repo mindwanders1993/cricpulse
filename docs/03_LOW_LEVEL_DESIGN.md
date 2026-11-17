@@ -16,7 +16,7 @@ Surgical: keep today's packages, add what is missing, retire the old agents.
 ```
 src/
   config.py                    # + storage, model, limits settings            [M0a, M0b, M5]
-  storage.py                   # NEW: LocalStorage | GCSStorage (same API)    [M0b]
+  storage.py                   # NEW: LocalStorage (a directory)              [M0b]
   downloaders/                 # unchanged; writes to bronze/ via storage    [M0b]
   parsers/
     match_parser.py            # + super over, event, retirement kinds        [M1]
@@ -64,7 +64,7 @@ evals/
 
 ### 2.1 Entry point
 `python -m src.publisher.main run [--full-archive]` — runs locally against `data/`, or as the
-Cloud Run Job `cricpulse-ingest` against the GCS bucket. The storage backend comes from config.
+the `cricpulse` CLI, run by hand against `data/`. The data directory comes from config. *Superseded 17 Nov 2026: a local directory — instead of a cloud job on a cloud bucket, because there is one machine.*
 
 ### 2.2 Steps
 
@@ -244,10 +244,10 @@ Builds the response (§6.2): `reply` (headline), `key_points` (tiles, reusing to
 `receipt` (`sql[]`, `row_count`, `data_cutoff`, `sources[]`), `follow_ups`, `subjects`.
 
 ### 5.7 Model gateway **[M2]**
-- `llm.py` builds PydanticAI models on the OpenRouter provider from config:
-  `ORCHESTRATOR_MODEL`, `FALLBACK_MODEL`, `LLM_TIMEOUT_S=30`, one retry.
-- The static system prompt + tool schemas go first (cacheable). Volatile text goes last.
-- Every call logs tokens and cost into the trace (§8.3).
+- `llm.py` builds PydanticAI models on the Moonhopper gateway (`http://127.0.0.1:4000/v1`, model name `cricpulse-local`) from config:
+  `llm_base_url`, `llm_model`, `llm_api_key`, `LLM_TIMEOUT_S=30`, one retry. There is no cloud fallback model. *Superseded 17 Nov 2026: the local gateway — instead of the OpenRouter provider, because the owner wants no paid service.*
+- The static system prompt + tool schemas go first. Volatile text goes last.
+- Every call logs tokens and latency into the trace (§8.3). The gateway also logs each call.
 - Test mode: PydanticAI's `TestModel` / `FunctionModel` replace today's mock branch.
 
 ---
@@ -299,7 +299,7 @@ class ChatResponse(BaseModel):
 |---|---|
 | Per IP | 10 questions / minute, 60 / day |
 | Global daily spend | `DAILY_SPEND_USD` (cap ÷ 30); over it → friendly 429 |
-| Provider key | Monthly limit set on the OpenRouter key (hard stop) |
+| Provider key | *Superseded 17 Nov 2026: none — instead of a monthly limit on a paid provider key, because the model is local.* |
 | Body size | 8 KB |
 | CORS | The app's own origin only |
 
@@ -334,9 +334,9 @@ Single file `src/api/static/index.html`, plain JS (as today).
 | Variable | Used by | Example |
 |---|---|---|
 | `APP_ENV` | all | `production` |
-| `STORAGE_BACKEND` / `GCS_BUCKET` | job | `gcs` / `cricpulse-data` |
+| `STORAGE_BACKEND` / `GCS_BUCKET` | job | *Superseded 17 Nov 2026: none; `DATA_DIR` only — instead of a cloud bucket, because storage is a directory.* |
 | `SNAPSHOT_PATH` | API | `/app/snapshot/cricket.duckdb` |
-| `OPENROUTER_API_KEY` | API | Secret Manager |
+| `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | API | `http://127.0.0.1:4000/v1`, `cricpulse-local`, the gateway's local key in `.env`. *Superseded 17 Nov 2026: replaces the OpenRouter key in a cloud secret store, because nothing leaves the laptop.* |
 | `ORCHESTRATOR_MODEL`, `FALLBACK_MODEL` | API | chosen by evals |
 | `DAILY_SPEND_USD`, `RATE_PER_MIN`, `RATE_PER_DAY` | API | `0.35`, `10`, `60` |
 | `ALLOWED_ORIGINS` | API | the service URL |
