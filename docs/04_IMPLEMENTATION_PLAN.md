@@ -1,6 +1,6 @@
 # CricPulse — Implementation Plan
 
-**Status:** Draft v0.1 · **Date:** 26 Oct 2026
+**Status:** Draft v0.1 · **Date:** 26 Oct 2026 · **Revised:** 17 Nov 2026 (personal, local; one module at a time)
 **Input:** `01_PRD` · `02_HLD` · `03_LLD`
 **Same approach as HoppingCars:** modules in order, each planned in its own dossier, built
 task by task, reviewed, tested, then **sealed** before the next one starts.
@@ -30,15 +30,15 @@ Pick ─▶ Deep dive (dossier) ─▶ Task cards ─▶ Build task by task ─�
 
 | Module | Name | Release | Goal (one line) | PRD items | Depends on | Status |
 |---|---|---|---|---|---|---|
-| **M0a** | Safe serving | R0 | The API cannot be tricked into reading files, injecting SQL, or serving an empty DB | TR-2 | — | Planned |
+| **M0a** | Safe serving | R0 | The API cannot be tricked into reading files, injecting SQL, or serving an empty DB; it listens on `127.0.0.1` only | TR-2 | — | Planned |
 | **M0b** | Trustworthy data pipeline | R0 | Nightly job that never shrinks or corrupts the live data | TR-9 | ADR-1…4, 10 | **Deep dive** — `features/M0B-*` |
 | **M1** | Cricket-correct data | R1 | Super overs, retirements, DLS, events, stable venues, `snapshot_info` | TR-4…8, FR-7 (data) | M0b | Planned |
 | **M2** | Orchestrator & stat tools | R1 | One agent with typed tools answers stats questions; evaluation set v1 | FR-1, FR-3, FR-7, FR-8 | M1 | Planned |
 | **M3** | Trust layer | R1 | Checker, receipts, honest "can't answer", topic guard | FR-2, TR-1, TR-3 | M2 | Planned |
 | **M4** | Chat experience | R1 | Streaming, follow-up memory, answer card with receipt | FR-4, FR-5, FR-6 | M3 | Planned |
-| **M5** | Launch guard & private beta | R1 | Rate limits, spend cap, traces, eval gate, beta deploy | NFR cost, quality | M4 | Planned |
+| **M5** | Eval gate and daily use | R1 | Traces, eval gate and model choice; daily use by the owner. Rate limits, spend cap and beta deploy are parked (17 Nov 2026). | NFR latency, quality | M4 | Planned |
 | **M6** | People & playing styles | R2 | Player profiles; style matchups (licence settled, D-4) | FR-8 (style), FR-10 | M5 | Planned |
-| **M7** | Venues, phases & public launch | R2 | Venue profiles, phase baselines, launch checklist | FR-9 | M6 | Planned |
+| **M7** | Venues and phases | R2 | Venue profiles, phase baselines. Public launch is parked (17 Nov 2026). | FR-9 | M6 | Planned |
 | **M8** | Knowledge & rules | R3 | Cited answers on rules and history | FR-11 | M7 | Planned |
 | **M9** | Hindi answers | R3 | Same answers in Hindi; checker covers it | FR-12 | M8 | Planned |
 | **M10** | News search *(optional)* | R3 | Recent context with sources, nothing stored | — | M8 | Planned |
@@ -69,20 +69,21 @@ flowchart LR
 
 ### M0a — Safe serving
 - Validate `sort_by` against an allowlist (`routes/analytics.py:35,77`).
+- Bind uvicorn to `127.0.0.1` (not `0.0.0.0`).
 - DuckDB settings: `enable_external_access=false`, `lock_configuration=true`, memory limit.
-- Guard: function **allowlist**.
+- Guard: function **allowlist** (the one door to the database).
 - Cursor per request; no connection swap while serving.
 - No snapshot → refuse to start; honest `/ready`.
 - CORS allowlist; no default secrets in production.
 - Python 3.12 + `uv.lock` in Docker and CI.
 
 ### M0b — Trustworthy data pipeline
-- `storage.py` (local + GCS).
+- `storage.py` (a local directory). *Superseded 17 Nov 2026: local only — instead of local + a cloud bucket, because there is one machine.*
 - Manifest + Silver merge; quarantine bad files.
 - Full Gold rebuild from Silver; never-shrinks gate.
 - Versioned publish + `LATEST.json`.
-- Cloud Run Job + Scheduler; remove `/internal/sync-daily` and the hot swap.
-- Measure snapshot size; settle ADR-4 (bake into image vs volume mount).
+- The `cricpulse` CLI run by hand (a launchd job later); remove `/internal/sync-daily` and the hot swap. *Superseded 17 Nov 2026: a CLI — instead of a cloud job and scheduler, because there is no cloud.*
+- Measure snapshot size. *Superseded 17 Nov 2026: ADR-4 is closed; the API reads `data/` through `LATEST.json`.*
 
 ### M1 — Cricket-correct data
 - Parser: super overs, retirement kinds, events, venue aliases.
@@ -91,10 +92,10 @@ flowchart LR
 - Catalog: `counts_as_dismissal`; table allowlist read from the schema.
 
 ### M2 — Orchestrator & stat tools
-- `llm.py` (PydanticAI on OpenRouter), `orchestrator.py`, tool registry.
+- `llm.py` (PydanticAI on the Moonhopper gateway, model `cricpulse-local`), `orchestrator.py`, tool registry.
 - Tier 1 tools + `run_sql` (one repair) + `ask_user`.
 - `/api/v1/chat` (JSON).
-- `evals/` with ~50 questions; pick the model.
+- `evals/` with ~50 questions, seeded with the review's 26; pick the model (the Qwen3.5-9B start against a bigger MLX challenger).
 - Retire supervisor, scout, storyteller and the regex router.
 
 ### M3 — Trust layer
@@ -107,11 +108,14 @@ flowchart LR
 - UI: answer card, receipt panel, clarifying options, history in `sessionStorage`, attribution footer.
 - Remove the old `/ai/*` endpoints.
 
-### M5 — Launch guard & private beta
-- Rate limits, daily spend cap, provider key limit.
-- Trace record + cost per answer.
-- Eval gate in CI; live run before deploy.
-- Private beta on Cloud Run.
+### M5 — Eval gate and daily use
+- Trace record per answer (local file), plus the gateway's own call log.
+- Eval gate in CI; live run against the local model.
+- Model choice settled by the eval score; daily use by the owner.
+- *Superseded 17 Nov 2026: rate limits, spend cap, provider key limit and a cloud beta are parked — instead of a launch guard and private beta, because the owner is the only user.*
+
+### M7 — Venues and phases
+Venue profiles and phase baselines. Public launch is parked (17 Nov 2026).
 
 ### M6 – M12
 Planned at their deep dive. Scope is in the roadmap table and the LLD tags.

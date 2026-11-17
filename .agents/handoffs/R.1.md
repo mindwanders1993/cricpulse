@@ -1,0 +1,24 @@
+# Handoff: R.1 (docs)
+- Branch / checkout: /Users/mrrobot/Desktop/Projects/cricpulse-R-docs (toplevel confirmed first)
+- State: done
+- Colour: 🟢
+- What changed:
+  - `docs/01_PRODUCT_REQUIREMENT_DOCUMENT.md`: principles 4 and 5; D-1 to D-5 with dated "Superseded 17 Nov 2026" notes; §1.4 (no paid calls, ≤ 30 s); §7 cost, availability, privacy, attribution, security rows; §9 R1 to R4; §10 risk row.
+  - `docs/02_HIGH_LEVEL_DESIGN.md`: §1 diagram (local model server); §2 data store row; §4 refresh flow; §6.2 model runtime and candidates; §7 local topology; §8 security shrunk to localhost bind, guard, read-only DB; §9 memory and latency budget; §10 traces to a local file plus gateway log; §11 failure rows; ADR-2, ADR-4, ADR-7 superseded with notes; T-2 closed.
+  - `docs/03_LOW_LEVEL_DESIGN.md`: storage layout line, §2.1 entry point, §5.7 `llm.py` on the Moonhopper gateway, §6.4 provider-key row, §8.1 storage and key config rows (marked superseded).
+  - `docs/04_IMPLEMENTATION_PLAN.md`: §2 M0a, M5 ("Eval gate and daily use"), M7 (no public launch); §3 M0a (localhost bind), M0b, M2, M5 and an M7 entry.
+  - `AGENTS.md`: Purpose line, Kaizen card "What this is", "Run it" (model start command, no `gcloud`), Tests line (mock rule). Invariant 2 left as it is.
+- Verification run: `git grep -n -i -e openrouter -e "cloud run" -e gcs -- docs/0*.md AGENTS.md | grep -v -i -e superseded -e "No GCS SDK calls"` printed nothing; final grep exit 1 (the pass).
+- Done-when lines met:
+  - Every listed edit made: yes, in the files above.
+  - `docs/03` `llm.py` on the Moonhopper gateway, GCS and OpenRouter config rows superseded: yes (§5.7, §8.1).
+  - OpenRouter, Cloud Run and GCS only on lines that also say "Superseded": yes, per the Verify output.
+  - AGENTS.md invariant 2 unchanged: yes.
+- Proof: output only. Three lines: you can read the personal, local, open-source story in the documents; it works (yes); next, R.2 makes the app run on the local model.
+- Followed the code, not the card: none.
+- Open issues / decisions needed:
+  - AGENTS.md Tests line says the mock runs "when no model key is set (`GEMINI_API_KEY` today; `LLM_API_KEY` once R.2 lands)". Fix the wording if R.2 names it differently.
+  - The Kaizen card "Stage" line still says M0b. It is not in the plan's edit list, so I left it.
+  - docs/01 §3 and §4 are unchanged. Hindi (FR-12) and the data release columns still say R3; D-3 notes it is parked.
+  - A short M7 entry was added to docs/04 §3 so the "no public launch" edit has a home.
+- Proposed commit: `docs(revamp): personal, local, open-source stack in PRD, HLD, LLD, plan and Kaizen card [R.1]` — trailer `Module: R.1`

@@ -1,6 +1,6 @@
 # CricPulse — Repository Constitution
 
-> **Purpose:** CricPulse is a public, chat-only Cricket General Intelligence: a Polars + DuckDB lakehouse of every
+> **Purpose:** CricPulse is a personal, local, chat-only Cricket General Intelligence: a Polars + DuckDB lakehouse of every
 > recorded ball, a semantic layer that locks the cricket arithmetic, and a FastAPI agent service that answers with
 > receipts. Python 3.11+, one service, `src/` and `tests/`.
 
@@ -61,15 +61,15 @@
 
 ## Kaizen card
 
-- **What this is:** a public, chat-only cricket assistant: anyone asks a cricket question and gets the answer with its numbers, a chart and a receipt, from every recorded ball.
+- **What this is:** a personal, local cricket assistant for the owner alone: ask a cricket question and get the answer with its numbers, a chart and a receipt, from every recorded ball. Fully open source, no paid service, no Google Cloud (owner, 17 Nov 2026).
 - **Stage:** M0b — trustworthy data pipeline, on `feat/M0b-trustworthy-data-pipeline`. A module's status is its row in `docs/04_IMPLEMENTATION_PLAN.md` §2: **Deep dive** once its dossier is approved, **Sealed** once every §4 Definition of Done row holds (the owner merges and signs the UAT).
 - **Plan from:** PRD `docs/01_PRODUCT_REQUIREMENT_DOCUMENT.md` → HLD `docs/02_HIGH_LEVEL_DESIGN.md` → LLD `docs/03_LOW_LEVEL_DESIGN.md` → `docs/04_IMPLEMENTATION_PLAN.md` (§2 roadmap, §3 first-cut scope, §4 Definition of Done, §5 templates) → the module dossier, which refines them and never contradicts a sealed decision · one module at a time, only once its §2 dependencies are Sealed
 - **Not building:** PRD §8 *Out of Scope* (26 Oct 2026)
 - **Work lives in:** spec = the dossier `docs/features/M<n>-<NAME>.md` (template `docs/04` §5.1; the owner reads its §0, §1, §4) · task cards `docs/features/M<n>-TASK-CARDS.md` (template §5.2; task ids `M<n>.<k>`; M0b's files are spelled `M0B-*`) · handoffs `.agents/handoffs/` · reviews `docs/reviews/M<n>-REVIEW.md` · UAT `docs/uat/M<n>-UAT.md`
 - **Decisions:** the dossier's §4 rows `D-n`, dated, "instead of X, because Y"; code cites them in a one-line comment (`M0b dossier D-5`) · generator: none
-- **Run it:** `bash scripts/run_local.sh` (uvicorn on :8000; `curl -s localhost:8000/ready`); more in `dojo` · `gcloud` commands are the owner's
+- **Run it:** start the model first: `make start` in the Moonhopper repo (LiteLLM gateway on `127.0.0.1:4000`, model `cricpulse-local`, key in CricPulse's `.env`) · then `bash scripts/run_local.sh` (uvicorn on :8000; `curl -s localhost:8000/ready`); more in `dojo`
 - **Checks:** `source .venv/bin/activate && ruff check . && ruff format --check .` (CI's exact steps; `docs/` is excluded in `pyproject.toml`) · never `# noqa` or `# type: ignore` to get green
-- **Tests:** `python -m pytest -q` · one file: `python -m pytest tests/test_<area>.py -q` · slices: API `tests/test_api_and_agents.py`, pipeline `tests/test_loader_and_schema.py tests/test_match_parser.py`, catalog `tests/test_semantic.py` · the LLM is mocked when `GEMINI_API_KEY` / `OPENROUTER_API_KEY` is unset; network tests skip unless `CRICPULSE_LIVE=1` · new tests in `tests/test_<area>.py`, fixtures from `tests/fixtures/`, disk only in temp dirs; mocks stop at the network
+- **Tests:** `python -m pytest -q` · one file: `python -m pytest tests/test_<area>.py -q` · slices: API `tests/test_api_and_agents.py`, pipeline `tests/test_loader_and_schema.py tests/test_match_parser.py`, catalog `tests/test_semantic.py` · the LLM is mocked when no model key is set (`GEMINI_API_KEY` today; `LLM_API_KEY` once R.2 lands); network tests skip unless `CRICPULSE_LIVE=1` · new tests in `tests/test_<area>.py`, fixtures from `tests/fixtures/`, disk only in temp dirs; mocks stop at the network
 - **Rules that must hold:** the eight invariants above (in full: `invariants`; cricket formulas: `catalog-first`) · `data/` is live data: no test reads or writes it, no session scans it, and a task that runs the UAT or rebuilds it starts alone · a review recomputes one batting and one bowling figure by hand from a fixture · stress evaluations: none before M2; from M2 the `evals/` set (lookup and judgement pairs) may not lose a pass (DoD row 4); until it exists, report "evals: not yet"
 - **Try it:** `python scripts/run_uat.py` (health, leaderboards, guard, agents, sync), then the dossier §8 chat journeys on `run_local.sh`, each a question, the expected answer (insight, numbers, chart, table, receipt) and the invariant it proves; from M2 every number is checked against the receipt's tool output · on a real snapshot under `data/` or the harness's fixture build, never the suite's temp databases · record `docs/uat/M<n>-UAT.md` (snapshot version and cutoff, live or mock model, harness count, journeys, invariants seen); the owner signs it (DoD row 6)
 - **Proof:** none, output only

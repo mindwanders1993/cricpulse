@@ -1,6 +1,6 @@
 # CricPulse — High-Level Design
 
-**Status:** Draft v0.1 · **Date:** 26 Oct 2026
+**Status:** Draft v0.1 · **Date:** 26 Oct 2026 · **Revised:** 17 Nov 2026 (personal, local, open source)
 **Input:** `01_PRODUCT_REQUIREMENT_DOCUMENT.md` (D-1 … D-5 taken at the recommended values)
 **Next:** `03_LOW_LEVEL_DESIGN.md` → `04_IMPLEMENTATION_PLAN.md`
 
@@ -11,6 +11,7 @@
 This document says **how the system is shaped**: its parts, how they talk, where data lives,
 and the big decisions. The LLD goes one level down, to files, functions and schemas.
 
+Since 17 Nov 2026 CricPulse is a personal tool on the owner's Mac. It uses no paid service and no Google Cloud.
 ADR status: **Proposed** = recommended, needs the owner's OK · **Accepted** = owner agreed.
 
 ---
@@ -23,10 +24,10 @@ flowchart LR
         CS[Cricsheet<br/>match JSON + registers]
         WD[Wikidata<br/>R2]
         CUR[Curated sheets<br/>venues, styles]
-        LLM[LLM provider<br/>via OpenRouter]
+        LLM[Local model server<br/>Moonhopper gateway :4000<br/>MLX · Qwen3.5-9B]
     end
 
-    subgraph Ingest["Ingestion plane · Cloud Run Job · nightly"]
+    subgraph Ingest["Ingestion plane · CLI · run by hand"]
         DL[Download] --> DIFF[Diff vs manifest]
         DIFF --> PARSE[Parse changed files<br/>Polars]
         PARSE --> SILVER[Merge into Silver<br/>Parquet]
@@ -35,14 +36,14 @@ flowchart LR
         GATES --> PUB[Publish versioned<br/>snapshot]
     end
 
-    subgraph Store["Object storage · GCS"]
+    subgraph Store["Local directory · data/"]
         B[(Bronze<br/>raw files)]
         S[(Silver<br/>Parquet + manifest)]
         G[(Snapshots<br/>cricket_v*.duckdb + LATEST)]
     end
 
-    subgraph Serve["Serving plane · Cloud Run service · scale to zero"]
-        UI[Chat UI<br/>static /ui] --> API[FastAPI<br/>limits · CORS · SSE]
+    subgraph Serve["Serving plane · FastAPI on 127.0.0.1"]
+        UI[Chat UI<br/>static /ui] --> API[FastAPI<br/>localhost only · SSE]
         API --> ORC[Orchestrator<br/>one LLM + typed tools]
         ORC --> TOOLS[Stat tools · run_sql<br/>ask_user · knowledge]
         TOOLS --> DB[(Read-only DuckDB<br/>snapshot)]
@@ -61,8 +62,8 @@ flowchart LR
     CMP --> API
 ```
 
-**In one line:** a nightly job turns raw cricket files into an immutable, versioned DuckDB snapshot.
-A stateless chat service answers questions by calling typed tools over that snapshot. A checker
+**In one line:** a command run by hand turns raw cricket files into an immutable, versioned DuckDB snapshot.
+A stateless chat service on `127.0.0.1` answers questions by calling typed tools over that snapshot. A checker
 rejects any number the tools did not return.
 
 ---
@@ -72,12 +73,12 @@ rejects any number the tools did not return.
 | # | Subsystem | Responsibility | Code today | Changes |
 |---|---|---|---|---|
 | 1 | **Ingestion job** | Download, parse, build, check, publish | `src/downloaders`, `src/parsers`, `src/builder`, `src/publisher` | Runs as a job, not inside the API. Silver persisted. Full rebuild. Versioned publish. |
-| 2 | **Data store** | Bronze, Silver, Gold snapshots | Local `data/` only | GCS bucket with the same layout; local dir for dev |
+| 2 | **Data store** | Bronze, Silver, Gold snapshots | Local `data/` only | Same layout, local `data/` only. *Superseded 17 Nov 2026: local `data/` only — instead of a cloud bucket, because there is one machine.* |
 | 3 | **Semantic layer** | Metric formulas, dimensions, entity resolution | `conf/semantic_catalog.yaml`, `src/semantic` | Stays the single home for formulas |
 | 4 | **AI service** | Orchestrator, tools, checker, composer | `src/ai` (supervisor + 3 agents) | Supervisor + regex router replaced by one orchestrator with tools |
-| 5 | **API** | HTTP, streaming, limits | `src/api` | Chat + stream endpoints; sync endpoint removed |
+| 5 | **API** | HTTP, streaming | `src/api` | Chat + stream endpoints; sync endpoint removed; binds `127.0.0.1` |
 | 6 | **Chat UI** | One screen, one chat box | `src/api/static/index.html` | Streaming, receipts, history |
-| 7 | **Ops** | CI/CD, scheduling, logs, evaluations | `.github/workflows`, `scripts` | Job deploy, eval gate, traces |
+| 7 | **Ops** | CI/CD, scheduling, logs, evaluations | `.github/workflows`, `scripts` | Eval gate, traces |
 
 ---
 
@@ -96,7 +97,7 @@ sequenceDiagram
 
     U->>UI: "Kohli in ODI chases since 2015?"
     UI->>API: POST /api/v1/chat/stream (message + last turns)
-    API->>API: rate limit · spend cap · size limit
+    API->>API: size limit
     API->>O: run(message, history)
     O->>L: system + tools + history + message
     L-->>O: call get_player_stats(Kohli, ODI, chasing, since 2015)
@@ -120,35 +121,34 @@ Rules:
 
 ---
 
-## 4. Data Flow — Nightly Update
+## 4. Data Flow — Data Refresh
 
 ```mermaid
 sequenceDiagram
-    participant SCH as Cloud Scheduler
-    participant J as Ingest Job
-    participant GCS as GCS bucket
-    participant CR as Cloud Run (API)
+    participant OWN as Owner
+    participant J as Ingest CLI
+    participant D as data/ directory
 
-    SCH->>J: 02:00 IST trigger
-    J->>GCS: save raw archive to bronze/
-    J->>GCS: read manifest (match_id → sha256)
+    OWN->>J: cricpulse run (by hand; a launchd job may come later)
+    J->>D: save raw archive to bronze/
+    J->>D: read manifest (match_id → sha256)
     J->>J: parse only changed files (bad file → quarantine, job continues)
-    J->>GCS: write merged Silver Parquet + new manifest
+    J->>D: write merged Silver Parquet + new manifest
     J->>J: build Gold from ALL Silver → marts
     J->>J: quality gates (incl. "never shrinks")
     alt gates pass
-        J->>GCS: upload snapshots/cricket_v<id>.duckdb
-        J->>GCS: write snapshots/LATEST.json (atomic object write)
-        J->>CR: roll out new revision on the new snapshot
+        J->>D: write snapshots/cricket_v<id>.duckdb
+        J->>D: write snapshots/LATEST.json (atomic rename)
+        Note over D: the API reads the new snapshot at its next start
     else gates fail
-        J->>J: stop — LATEST untouched, live service unchanged
+        J->>J: stop — LATEST untouched, live data unchanged
     end
 ```
 
 This removes all three blocking bugs from 08 §9:
 1. **Delta wipes the corpus** → Gold is always rebuilt from all of Silver.
 2. **Overwrite under live readers** → snapshots are never overwritten; a new one means a new revision.
-3. **Empty, open deploy** → the API refuses to start without a snapshot; limits and a spend cap guard the endpoint.
+3. **Empty, open deploy** → the API refuses to start without a snapshot, and listens on `127.0.0.1` only.
 
 ---
 
@@ -162,7 +162,7 @@ This removes all three blocking bugs from 08 §9:
 | **Silver** | Parsed, normalised rows per table; manifest of parsed files | Parquet, one file per table | Rewritten each run by merge |
 | **Gold** | Star schema + marts + `snapshot_info` | One DuckDB file per publish | Keep last 7 versions |
 
-### 5.2 Storage layout (GCS bucket and local `data/` mirror it)
+### 5.2 Storage layout (the local `data/` directory)
 
 ```
 bronze/cricsheet/<date>/<archive>.zip
@@ -212,33 +212,35 @@ snapshots/LATEST.json                # version, path, sha256, counts, data cutof
   receipt, follow-ups. Reuses `ChartSpecGenerator`.
 
 ### 6.2 Model choice
-- One provider gateway (OpenRouter, as today). The model is a config value per role.
-- **The evaluation set picks the model:** the cheapest model that scores ≥ 90%.
-- Candidates: Claude Haiku 5.5, Claude Sonnet 5.5, Gemini 2.5 Flash.
-- Static prompt parts go first so the provider can cache them.
+- **Runtime:** the owner's Moonhopper gateway. LiteLLM (`127.0.0.1:4000`, MIT) forwards to `mlx_vlm.server` (`:8080`, MIT) on Metal. CricPulse calls the OpenAI-style API at `http://127.0.0.1:4000/v1` with the model name `cricpulse-local`. That name has **no cloud fallback**. The model is a config value per role (`llm_base_url`, `llm_model`, `llm_api_key`).
+- **The evaluation set picks the model:** the one that answers the most of the 26 review questions right, fast enough (full answer ≤ 30 s).
+- **Start with** Qwen3.5-9B (Apache 2.0), 8-bit MLX, about 10 GB. It is already downloaded and passed the tool-call test on 17 Nov 2026.
+- **Challenger (M2):** a bigger MLX model, such as a 30B-class mixture of experts at 4-bit (about 20 GB).
+- **Small models guess.** In the test it assumed "Test" for "Smith's average". So ambiguity is enforced by the tools: a missing format returns "ask the user".
+- *Superseded 17 Nov 2026 (ADR-7): a local model on Moonhopper — instead of a paid gateway with Claude and Gemini candidates, because the owner wants no paid service and nothing leaving the laptop.*
 
 ---
 
-## 7. Deployment Topology (GCP)
+## 7. Local Topology
 
 ```mermaid
 flowchart TB
-    subgraph GCP["Google Cloud project"]
-        SCH[Cloud Scheduler<br/>nightly] --> JOB[Cloud Run Job<br/>cricpulse-ingest<br/>4 GiB · 1 task]
-        JOB --> GCS[(GCS bucket<br/>bronze · silver · snapshots)]
-        JOB --> AR[Artifact Registry]
-        AR --> SVC[Cloud Run service<br/>cricpulse-api<br/>min 0 · max 2]
-        SM[Secret Manager<br/>LLM key] --> SVC
-        SVC --> LOG[Cloud Logging<br/>traces + cost]
+    subgraph MAC["Owner's Mac · Apple M5 · 32 GB"]
+        CLI[cricpulse CLI<br/>run by hand] --> DATA[(data/<br/>bronze · silver · snapshots)]
+        DATA --> API[FastAPI<br/>127.0.0.1:8000]
+        API --> GW[Moonhopper gateway<br/>LiteLLM 127.0.0.1:4000]
+        GW --> MLX[mlx_vlm.server :8080<br/>Qwen3.5-9B 8-bit]
+        GW --> PG[(Postgres 16<br/>call logs)]
+        ENV[.env<br/>gateway key] --> API
     end
-    USERS((Users)) -->|HTTPS| SVC
-    SVC -->|HTTPS| OR[OpenRouter]
-    GH[GitHub Actions<br/>lint · tests · evals] --> AR
+    ME((Owner's browser)) -->|localhost| API
 ```
 
-- **Same codebase, two entry points:** `cricpulse-api` (service) and `cricpulse-ingest` (job).
-- **Local dev:** `docker compose` runs the API on a local snapshot; the job runs as a CLI against `data/`.
-- **Snapshot delivery to the API** is ADR-4 (decided by a measurement in M0b).
+- **Same codebase, two entry points:** the API (`bash scripts/run_local.sh`) and the ingest CLI.
+- **Start order:** `make start` in Moonhopper, then the app. With no internet the app still answers.
+- **Snapshot delivery:** the API reads `data/` through `LATEST.json`. No image, no deploy step.
+- **Memory budget:** the 8-bit model takes about 10 GB. The DuckDB snapshot, Docker and a browser share the rest of 32 GB.
+- *Superseded 17 Nov 2026 (ADR-2, ADR-4): a local topology on one Mac — instead of a Google Cloud topology (a cloud job, a bucket, a cloud service and a scheduler), because the owner is the only user and there is one machine.*
 
 ---
 
@@ -246,38 +248,38 @@ flowchart TB
 
 | Threat | Control |
 |---|---|
+| Other devices reach the app or the model server | The app binds `127.0.0.1` only. The gateway is local. Check that `mlx_vlm.server` does not listen on `0.0.0.0:8080`. |
 | SQL reads files or the network | DuckDB `enable_external_access=false` + `lock_configuration=true`; function denylist in the guard |
-| SQL writes or escapes the schema | `read_only=True`; AST allows one `SELECT`/`WITH` over `gold.*` only |
+| SQL writes or escapes the schema | `read_only=True`; AST allows one `SELECT`/`WITH` over `gold.*` only (the guard) |
 | Expensive queries | `LIMIT 500` injected; 5 s timeout via interrupt; memory limit |
 | Prompt injection from web/knowledge text | Tool output is data; no tool can act on the outside world; topic guard |
-| Cost denial-of-service | Per-IP rate limits; daily spend cap in app; **hard monthly cap on the provider key** |
-| Corrupt or empty data served | Immutable snapshots; quality gates; API refuses to start without a snapshot |
-| Secrets leak | Secret Manager; nothing in the image; no default tokens in production |
-| Cross-site abuse | CORS allowlist of the app's own origin; no credentials with wildcard origins |
+| Secrets leak | Only the gateway's local key, in `.env`; never in code, logs or commits |
+
+Rate limits, a spend cap and CORS work are parked with the public launch (17 Nov 2026).
 
 ---
 
-## 9. Cost Model (estimate — check in M5 with real traces)
+## 9. Memory and Latency Budget (checked 17 Nov 2026 on an Apple M5, 32 GB, 100 GB free disk)
 
-Assumes ~10k input and ~1.5k output tokens per answer (2–3 model calls, before caching).
-
-| Item | Monthly estimate | Note |
+| Item | Budget | Note |
 |---|---|---|
-| LLM on Claude Haiku 5.5 ($0.10 / $0.50 per M tokens) | ~$0.002 per answer → ~5,000 answers ≈ $10 | Fits the cap |
-| LLM on Claude Sonnet 5.5 ($2 / $10 per M tokens) | ~$0.035 per answer → ~300 answers ≈ $10 | Too costly for public use |
-| Cloud Run service + job | ≈ $0 | Free tier at beta traffic |
-| GCS (~5 GB) | < $0.20 | |
-| Artifact Registry, Scheduler, Secrets | ≈ $0 | Keep 3 images; 1 scheduler job |
-| **Cap** | **₹1,000 ≈ $11** | Enforced by the provider key limit |
+| Money | No paid service | Local model; no per-answer cost |
+| Model memory | About 10 GB | Qwen3.5-9B, 8-bit. A 30B-class 4-bit challenger needs about 20 GB. |
+| Rest of memory | About 20 GB for the OS, DuckDB, Docker and a browser | Measure in M2 before the challenger runs |
+| Step latency | 4–8 s per model step | Seen in the 17 Nov test |
+| Full answer | ≤ 30 s | A 3–4 step answer takes 15–30 s |
+
+*Superseded 17 Nov 2026: a memory and latency budget — instead of a ₹1,000 monthly cost model, because local models cost nothing per answer.*
 
 ---
 
 ## 10. Observability & Quality
 
-- **One trace record per answer:** request id, tools called, SQL, rows, tokens, cost, latency,
-  checker result, model, snapshot version. Written as structured logs (`structlog`, as today).
+- **One trace record per answer:** request id, tools called, SQL, rows, tokens, latency,
+  checker result, model, snapshot version. Written to a local file (`structlog`, as today).
+- **Model calls** are logged by Moonhopper's LiteLLM gateway in its Postgres 16 (tokens, latency, full prompt; dashboard at `:4000/ui`). No separate tracing server.
 - **Evaluation set** (`evals/questions.yaml`): question + expected numbers from independent SQL.
-  Runs in CI with a mock model, and live before each release. Release gate: ≥ 90%.
+  Runs in CI with a mock model, and live against the local model before each module is sealed. The gate: no regression.
 - **Quality gates** on every publish: row counts, null rates, no duplicate keys, never shrinks.
 
 ---
@@ -288,10 +290,9 @@ Assumes ~10k input and ~1.5k output tokens per answer (2–3 model calls, before
 |---|---|---|
 | Ingest job fails or gates fail | Yesterday's data; cutoff date says so | Fix; re-run job |
 | One bad match file | Nothing | Quarantined; alert in logs |
-| LLM provider down or slow | "Can't answer right now" | One retry, then fail fast |
-| Spend cap reached | "Daily limit reached, back tomorrow" | Resets daily |
+| Local model not running | "Local model not running — run `make start` in Moonhopper" | Start the gateway |
 | Tool SQL times out | Clarifying question or "too broad" | Narrower question |
-| Cold start | First answer 3–8 s slower | Accepted at beta traffic |
+| Model load after a start | First answer slower | Accepted; one user |
 
 ---
 
@@ -299,13 +300,13 @@ Assumes ~10k input and ~1.5k output tokens per answer (2–3 model calls, before
 
 | ADR | Decision | Why | Status |
 |---|---|---|---|
-| ADR-1 | **Keep DuckDB snapshots** as the serving store (not Postgres) | Always-on Postgres (~$10–15/mo) uses the whole ₹1,000 cap; DuckDB is built and fast; 08's DuckDB non-negotiables are adopted | **Accepted** 26 Oct |
-| ADR-2 | Ingestion runs as a **Cloud Run Job**; the API never writes data | Removes OOM, timeouts and the hot-swap bug | Proposed |
+| ADR-1 | **Keep DuckDB snapshots** as the serving store (not Postgres) | DuckDB is built, fast and local; 08's DuckDB non-negotiables are adopted | **Accepted** 26 Oct |
+| ADR-2 | Ingestion runs as a separate job; the API never writes data. *Superseded 17 Nov 2026: the job is the `cricpulse` CLI, run by hand — instead of a cloud job, because there is one machine and no cloud.* | Removes OOM, timeouts and the hot-swap bug | **Superseded** 17 Nov |
 | ADR-3 | **Immutable versioned snapshots**; a new snapshot = a new revision; no in-process swap | Atomic by construction | Proposed |
-| ADR-4 | Snapshot delivery: **bake into the API image** at publish; fallback: GCS volume mount | No download at start; verify memory use in M0b | Proposed |
+| ADR-4 | Snapshot delivery: bake into the API image at publish. *Superseded 17 Nov 2026: the API reads `data/` through `LATEST.json` — instead of an image or a cloud volume, because no deploy step exists.* | No download at start | **Superseded** 17 Nov |
 | ADR-5 | **One orchestrator + typed tools + checker**; Scout and Storyteller become tools | 08 §5; fewer hops, cost, latency | Proposed |
 | ADR-6 | Agent framework: **PydanticAI** | Typed tools from Pydantic models, streaming, provider-neutral, test models; fallback: a ~150-line custom loop | **Accepted** 26 Oct |
-| ADR-7 | **OpenRouter** gateway; model chosen by the evaluation set | One key, many models, key-level spend limit | Proposed |
+| ADR-7 | A paid gateway, model chosen by the evaluation set. *Superseded 17 Nov 2026: the Moonhopper gateway with the local model `cricpulse-local` — instead of a paid gateway, because the owner wants no paid service.* The evaluation set still picks the model. | Local, free, logs every call | **Superseded** 17 Nov |
 | ADR-8 | **Keep the static chat UI** at `/ui`; add SSE | Chat-only product; no second app to run | Proposed |
 | ADR-9 | **Stateless server**; the UI sends recent turns | No session store needed | Proposed |
 | ADR-10 | Silver as **Parquet + manifest** replaces the SQLite ledger | The ledger lived on ephemeral disk and lost state | Proposed |
@@ -327,7 +328,7 @@ Assumes ~10k input and ~1.5k output tokens per answer (2–3 model calls, before
 | TR-2, TR-3 | §8 controls |
 | TR-4 … TR-7 | Parser + catalog rules (§5.4) |
 | TR-9 | Job + gates + immutable snapshots (§4) |
-| NFR cost | §8, §9 |
+| NFR cost | §9 (memory and latency budget) |
 
 ---
 
@@ -336,6 +337,6 @@ Assumes ~10k input and ~1.5k output tokens per answer (2–3 model calls, before
 | # | Item | Resolve in |
 |---|---|---|
 | T-1 | Full snapshot size (estimate 0.5–1.5 GB; only partial builds on disk today) | M0b |
-| T-2 | Does a file baked into the image count against Cloud Run instance memory? | M0b |
+| T-2 | *Superseded 17 Nov 2026: closed — there is no image or cloud instance* | — |
 | T-3 | Can DuckDB extensions (e.g. full-text search) load with external access off? Pre-install at build time | M8 |
 | T-4 | A source of upcoming fixtures for match previews | M11 |
